@@ -58,3 +58,65 @@ type Tool interface {
     Execute(ctx context.Context, args map[string]interface{}) (interface{}, error)
 }
 ```
+
+## Agent Types
+
+### LLMAgent
+
+A reasoning agent powered by an LLM with tool use and sub-agent delegation:
+
+```go
+agent := agent.NewLLMAgent(agent.LLMAgentConfig{
+    Name:   "assistant",
+    Prompt: "You are a helpful assistant. User context: {user_name}",
+    Model:  myModelProvider, // implements ModelProvider interface
+    Tools:  []agent.Tool{searchTool, calcTool},
+    MaxTurns: 10,
+})
+
+result, err := agent.Execute(ctx, task)
+```
+
+**Features:**
+- State injection into prompts via `{placeholder}` syntax
+- Automatic tool execution and state updates
+- Sub-agent delegation (responds to "delegate to <agent-name>" in LLM output)
+- Artifact extraction from state
+
+### SequentialAgent
+
+Runs agents in order, passing accumulated state:
+
+```go
+pipeline := agent.NewSequentialAgent("data-pipeline", []agent.Agent{
+    fetchAgent,
+    transformAgent,
+    storeAgent,
+})
+```
+
+### ParallelAgent
+
+Runs agents concurrently with isolated state copies:
+
+```go
+parallel := agent.NewParallelAgent("multi-search", []agent.Agent{
+    webSearchAgent,
+    dbSearchAgent,
+    cacheSearchAgent,
+})
+
+// Result.Output is map[string]interface{} with each agent's output
+```
+
+### PipelineAgent
+
+Chains agents where each output becomes the next input:
+
+```go
+pipeline := agent.NewPipelineAgent("etl", []agent.Agent{
+    extractAgent,  // output: raw data
+    transformAgent, // input: raw data, output: cleaned data
+    loadAgent,      // input: cleaned data
+})
+```
