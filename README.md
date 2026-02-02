@@ -120,3 +120,76 @@ pipeline := agent.NewPipelineAgent("etl", []agent.Agent{
     loadAgent,      // input: cleaned data
 })
 ```
+
+## Async Execution
+
+The `Executor` manages async task execution with a worker pool:
+
+```go
+exec := agent.NewExecutor(myAgent, 5) // 5 workers
+
+// Async submission
+taskID, _ := exec.Submit("Process this", params, config)
+
+// Check status
+status, _ := exec.GetStatus(taskID)
+// JobPending | JobRunning | JobCompleted | JobFailed
+
+// Get result (blocks until complete)
+result, err := exec.GetResult(taskID)
+
+// Or execute synchronously
+result, err := exec.ExecuteSync(ctx, "Process this", params)
+```
+
+## Session-Based Agents
+
+For interactive, stateful conversations, use `SessionAgent`:
+
+```go
+type SessionAgent interface {
+    Name() string
+    Run(ctx context.Context, inv *Invocation) (*Response, error)
+    Agents() []SessionAgent
+}
+```
+
+With thread-safe state management:
+
+```go
+state := agent.NewMapState()
+state.Set("user_id", "123")
+
+inv := &agent.Invocation{
+    SessionID: "session-abc",
+    UserID:    "user-123",
+    Input:     &agent.Message{Role: "user", Content: "Hello"},
+    State:     state,
+    Config: &agent.RunConfig{
+        MaxIterations: 10,
+        StreamingMode: agent.StreamingModeFull,
+        EnableMemory:  true,
+    },
+}
+```
+
+## Implementing ModelProvider
+
+To use `LLMAgent`, implement the `ModelProvider` interface:
+
+```go
+type ModelProvider interface {
+    Complete(ctx context.Context, prompt string, tools []Tool, history []Message) (*ModelResponse, error)
+}
+
+type ModelResponse struct {
+    Content   string
+    ToolCalls []ToolCall
+    Reasoning string
+    Finished  bool
+}
+```
+
+## License
+
+MIT
