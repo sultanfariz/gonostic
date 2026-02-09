@@ -1,11 +1,11 @@
-# llemme-go
+# gonostic
 
 A Go framework for building AI agent systems with tool use, orchestration, and async execution.
 
 ## Installation
 
 ```bash
-go get github.com/sultanfariz/llemme-go
+go get github.com/sultanfariz/gonostic
 ```
 
 ## Core Concepts

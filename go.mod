@@ -1,4 +1,4 @@
-module github.com/sultanfariz/llemme-go
+module github.com/sultanfariz/gonostic
 
 go 1.24
 
