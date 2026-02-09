@@ -5,7 +5,7 @@ A Go framework for building AI agent systems with tool use, orchestration, and a
 ## Installation
 
 ```bash
-go get github.com/sultanfariz/llemme-go
+go get github.com/sultanfariz/gonostic
 ```
 
 ## Core Concepts
