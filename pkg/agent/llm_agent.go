@@ -93,8 +93,10 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 			ToolCalls: []ToolCall{},
 		}
 
-		// Call LLM
+		// Call LLM and track latency
+		llmStart := time.Now()
 		resp, err := a.model.Complete(ctx, task.Input, task.Files, a.tools, history)
+		step.LLMLatency = time.Since(llmStart)
 		if err != nil {
 			step.Error = err.Error()
 			step.Duration = time.Since(stepStart)
@@ -103,12 +105,16 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 			return result, err
 		}
 
+		// Record token usage from response
+		step.TokenUsage = resp.Usage
+
 		step.Action = "reasoning"
 		step.Output = resp.Content
 
 		// Handle tool calls
 		if len(resp.ToolCalls) > 0 {
 			step.Action = "tool_execution"
+			var totalToolsLatency time.Duration
 
 			for i := range resp.ToolCalls {
 				tc := &resp.ToolCalls[i]
@@ -122,6 +128,7 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 				tcStart := time.Now()
 				tcResult, tcErr := tool.Execute(ctx, tc.Arguments)
 				tc.Duration = time.Since(tcStart)
+				totalToolsLatency += tc.Duration
 				tc.Result = tcResult
 				tc.Error = tcErr
 
@@ -138,6 +145,7 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 
 				step.ToolCalls = append(step.ToolCalls, *tc)
 			}
+			step.ToolsLatency = totalToolsLatency
 
 			// Add results to conversation
 			history = append(history, Message{
@@ -188,6 +196,9 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 
 		// Extract artifacts from state
 		result.Artifacts = a.extractArtifacts(task.State)
+
+		// Aggregate metrics
+		result.aggregateMetrics()
 
 		return result, nil
 	}
@@ -268,4 +279,18 @@ func formatToolResults(calls []ToolCall) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+// aggregateMetrics aggregates token usage and latencies from all steps.
+func (r *Result) aggregateMetrics() {
+	for _, step := range r.Steps {
+		r.TotalLLMLatency += step.LLMLatency
+		r.TotalToolsLatency += step.ToolsLatency
+
+		if step.TokenUsage != nil {
+			r.TotalTokenUsage.PromptTokens += step.TokenUsage.PromptTokens
+			r.TotalTokenUsage.CompletionTokens += step.TokenUsage.CompletionTokens
+			r.TotalTokenUsage.TotalTokens += step.TokenUsage.TotalTokens
+		}
+	}
 }

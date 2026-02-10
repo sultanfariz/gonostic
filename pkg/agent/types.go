@@ -37,26 +37,34 @@ type Task struct {
 
 // Result is the final output of an agent execution.
 type Result struct {
-	TaskID    string
-	Success   bool
-	Output    interface{}            // Final result (can be struct, string, map)
-	Artifacts []Artifact             // Generated files, images, etc.
-	Metadata  map[string]interface{} // Processing metadata
-	Error     string
-	Steps     []ExecutionStep // Audit trail
+	TaskID        string
+	Success       bool
+	Output        interface{}            // Final result (can be struct, string, map)
+	Artifacts     []Artifact             // Generated files, images, etc.
+	Metadata      map[string]interface{} // Processing metadata
+	Error         string
+	Steps         []ExecutionStep        // Audit trail
+
+	// Aggregated metrics
+	TotalLLMLatency   time.Duration // Total time spent on LLM calls across all steps
+	TotalToolsLatency time.Duration // Total time spent on tool execution across all steps
+	TotalTokenUsage   TokenUsage    // Total token usage across all steps
 }
 
 // ExecutionStep tracks what happened during a single turn.
 type ExecutionStep struct {
-	AgentName  string
-	Action     string
-	Input      interface{}
-	Output     interface{}
-	Error      string
-	Duration   time.Duration
-	Timestamp  time.Time
-	ToolCalls  []ToolCall
-	StateDelta map[string]interface{}
+	AgentName       string
+	Action          string
+	Input           interface{}
+	Output          interface{}
+	Error           string
+	Duration        time.Duration // Total step duration (LLM + tools)
+	LLMLatency      time.Duration // Time spent on LLM call
+	ToolsLatency    time.Duration // Time spent on tool execution (sum of all tools)
+	Timestamp       time.Time
+	TokenUsage      *TokenUsage // Token usage for LLM call in this step
+	ToolCalls       []ToolCall
+	StateDelta      map[string]interface{}
 }
 
 // ExecutionConfig controls how a task is executed.
@@ -99,12 +107,20 @@ type ModelProvider interface {
 	Complete(ctx context.Context, prompt string, files []FileInput, tools []Tool, history []Message) (*ModelResponse, error)
 }
 
+// TokenUsage tracks token consumption for LLM calls (model-agnostic).
+type TokenUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
 // ModelResponse is the response from an LLM.
 type ModelResponse struct {
 	Content   string
 	ToolCalls []ToolCall
 	Reasoning string
 	Finished  bool
+	Usage     *TokenUsage // Token usage metadata (provider-dependent)
 }
 
 // Message represents a conversation message.
