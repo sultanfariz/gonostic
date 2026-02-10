@@ -64,9 +64,25 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 
 	// Build initial prompt with state injection
 	systemPrompt := a.injectState(task.State)
+
+	// Build user message with files
+	userMsg := Message{
+		Role:    "user",
+		Content: task.Input,
+		Parts:   []Part{},
+	}
+
+	// Add file parts to user message
+	for _, file := range task.Files {
+		userMsg.Parts = append(userMsg.Parts, Part{
+			Type: file.Type,
+			Data: file.Content,
+		})
+	}
+
 	history := []Message{
 		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: task.Input},
+		userMsg,
 	}
 
 	for turn := 0; turn < a.maxTurns; turn++ {
@@ -78,7 +94,7 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 		}
 
 		// Call LLM
-		resp, err := a.model.Complete(ctx, task.Input, a.tools, history)
+		resp, err := a.model.Complete(ctx, task.Input, task.Files, a.tools, history)
 		if err != nil {
 			step.Error = err.Error()
 			step.Duration = time.Since(stepStart)

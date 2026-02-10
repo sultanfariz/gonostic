@@ -14,10 +14,20 @@ type Agent interface {
 	SubAgents() []Agent
 }
 
+// FileInput represents a file to be passed as input to the LLM.
+type FileInput struct {
+	Name     string      // Filename or identifier
+	Type     string      // MIME type (e.g., "image/png", "application/pdf", "text/plain")
+	Content  []byte      // Raw file content
+	URI      string      // Optional URI if file is referenced by path
+	Metadata interface{} // Additional metadata about the file
+}
+
 // Task represents a unit of work (API-triggered).
 type Task struct {
 	ID          string
 	Input       string                 // User's minimal prompt
+	Files       []FileInput            // Files to pass as input to LLM (images, PDFs, etc.)
 	Params      map[string]interface{} // Additional parameters
 	State       map[string]interface{} // Working state
 	Config      *ExecutionConfig
@@ -86,7 +96,7 @@ type Tool interface {
 
 // ModelProvider interfaces with LLM backends.
 type ModelProvider interface {
-	Complete(ctx context.Context, prompt string, tools []Tool, history []Message) (*ModelResponse, error)
+	Complete(ctx context.Context, prompt string, files []FileInput, tools []Tool, history []Message) (*ModelResponse, error)
 }
 
 // ModelResponse is the response from an LLM.
