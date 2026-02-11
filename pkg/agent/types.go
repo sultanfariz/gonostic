@@ -102,9 +102,21 @@ type Tool interface {
 	Execute(ctx context.Context, args map[string]interface{}) (interface{}, error)
 }
 
+// CompletionRequest encapsulates all parameters for LLM completion.
+// This provides a clean, extensible way to pass parameters to model providers.
+type CompletionRequest struct {
+	Prompt       string                 // User input prompt
+	Files        []FileInput            // Optional multimodal inputs (images, PDFs, etc.)
+	Tools        []Tool                 // Optional function calling tools
+	History      []Message              // Conversation history
+	OutputSchema map[string]interface{} // Optional JSON schema for structured output (nil = unstructured)
+	Temperature  *float32               // Optional sampling temperature (nil = use provider default)
+	MaxTokens    *int                   // Optional max completion tokens (nil = use provider default)
+}
+
 // ModelProvider interfaces with LLM backends.
 type ModelProvider interface {
-	Complete(ctx context.Context, prompt string, files []FileInput, tools []Tool, history []Message) (*ModelResponse, error)
+	Complete(ctx context.Context, req *CompletionRequest) (*ModelResponse, error)
 }
 
 // TokenUsage tracks token consumption for LLM calls (model-agnostic).

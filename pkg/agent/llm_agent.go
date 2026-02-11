@@ -10,24 +10,26 @@ import (
 // LLMAgent is a reasoning agent powered by an LLM. It iteratively calls the
 // model, executes tool calls, and can delegate to sub-agents.
 type LLMAgent struct {
-	name        string
-	description string
-	prompt      string
-	model       ModelProvider
-	tools       []Tool
-	subAgents   []Agent
-	maxTurns    int
+	name         string
+	description  string
+	prompt       string
+	outputSchema map[string]interface{} // JSON schema for structured output
+	model        ModelProvider
+	tools        []Tool
+	subAgents    []Agent
+	maxTurns     int
 }
 
 // LLMAgentConfig holds configuration for creating an LLMAgent.
 type LLMAgentConfig struct {
-	Name        string
-	Description string
-	Prompt      string // System prompt/instruction
-	Model       ModelProvider
-	Tools       []Tool
-	SubAgents   []Agent
-	MaxTurns    int
+	Name         string
+	Description  string
+	Prompt       string                 // System prompt/instruction
+	OutputSchema map[string]interface{} // JSON schema for structured output (optional)
+	Model        ModelProvider
+	Tools        []Tool
+	SubAgents    []Agent
+	MaxTurns     int
 }
 
 // NewLLMAgent creates a new LLMAgent from the given configuration.
@@ -36,13 +38,14 @@ func NewLLMAgent(cfg LLMAgentConfig) *LLMAgent {
 		cfg.MaxTurns = 10
 	}
 	return &LLMAgent{
-		name:        cfg.Name,
-		description: cfg.Description,
-		prompt:      cfg.Prompt,
-		model:       cfg.Model,
-		tools:       cfg.Tools,
-		subAgents:   cfg.SubAgents,
-		maxTurns:    cfg.MaxTurns,
+		name:         cfg.Name,
+		description:  cfg.Description,
+		prompt:       cfg.Prompt,
+		outputSchema: cfg.OutputSchema,
+		model:        cfg.Model,
+		tools:        cfg.Tools,
+		subAgents:    cfg.SubAgents,
+		maxTurns:     cfg.MaxTurns,
 	}
 }
 
@@ -52,6 +55,10 @@ func (a *LLMAgent) Name() string {
 
 func (a *LLMAgent) SubAgents() []Agent {
 	return a.subAgents
+}
+
+func (a *LLMAgent) OutputSchema() map[string]interface{} {
+	return a.outputSchema
 }
 
 func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
@@ -95,7 +102,22 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 
 		// Call LLM and track latency
 		llmStart := time.Now()
-		resp, err := a.model.Complete(ctx, task.Input, task.Files, a.tools, history)
+
+		// Build completion request
+		req := &CompletionRequest{
+			Prompt:       task.Input,
+			Files:        task.Files,
+			Tools:        a.tools,
+			History:      history,
+			OutputSchema: a.outputSchema,
+		}
+
+		// Add temperature from config if available
+		if task.Config != nil && task.Config.Temperature > 0 {
+			req.Temperature = &task.Config.Temperature
+		}
+
+		resp, err := a.model.Complete(ctx, req)
 		step.LLMLatency = time.Since(llmStart)
 		if err != nil {
 			step.Error = err.Error()
