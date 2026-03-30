@@ -175,105 +175,30 @@ inv := &agent.Invocation{
 
 ## TieredProvider
 
-`TieredProvider` wraps multiple `ModelProvider` implementations into a single provider with automatic retry and tiered fallback. Pass it anywhere a `ModelProvider` is accepted.
-
-### How it works
-
-Providers are organised in **tiers** (priority groups). Tier 0 is always tried first. Within a tier, providers are tried left-to-right. Each provider is retried with exponential backoff before the next is attempted. The framework only advances to the next tier after every provider in the current one has been exhausted.
-
-```
-Tier 0: [GPT-4o, GPT-4o-backup]  ← tried first
-Tier 1: [Claude Sonnet]           ← fallback if all of tier 0 fails
-```
-
-### Quick start
+Wraps multiple providers with automatic per-provider retry (exponential backoff) and tiered fallback. Tier 0 is tried first; the next tier is only reached after every provider in the current one is exhausted.
 
 ```go
-primary  := NewOpenAIProvider(apiKey, "gpt-4o")
-backup   := NewOpenAIProvider(apiKey, "gpt-4o-mini")
-fallback := NewAnthropicProvider(apiKey, "claude-sonnet-4-6")
-
 tiered := agent.NewTieredProvider(
     [][]agent.ModelProvider{
         {primary, backup}, // tier 0
         {fallback},        // tier 1
     },
-    agent.DefaultRetryConfig(),
+    agent.DefaultRetryConfig(), // 2 retries, 500ms initial, 2× backoff, 10s cap
 )
 
-myAgent := agent.NewLLMAgent(agent.LLMAgentConfig{
-    Name:  "assistant",
-    Model: tiered, // drop-in replacement
-})
+// Drop-in replacement for any ModelProvider
+myAgent := agent.NewLLMAgent(agent.LLMAgentConfig{Model: tiered, ...})
 ```
 
-### Retry config
+**Non-retryable errors** — implement `RetryableError` on your error type to signal permanent failures (e.g. auth errors, content policy). The framework stops immediately without retrying or falling back.
 
 ```go
-cfg := agent.RetryConfig{
-    MaxRetries:              2,               // retries per provider (0 = one attempt)
-    InitialDelay:            500 * time.Millisecond,
-    BackoffMultiplier:       2.0,             // delay doubles each retry
-    MaxDelay:                10 * time.Second,
-    MaxTiers:                0,               // 0 = try all tiers
-    SkipTiersOnNonRetryable: false,           // see non-retryable errors below
-}
+func (e *MyError) Retryable() bool { return e.StatusCode == 429 || e.StatusCode >= 500 }
 ```
 
-Backoff resets when moving to a new provider — each provider always starts from `InitialDelay`.
+Set `RetryConfig.SkipTiersOnNonRetryable = true` to fall through to the next tier even on permanent errors.
 
-### Non-retryable errors
-
-Providers can signal that an error is permanent (e.g. content policy violation, invalid API key) by implementing `RetryableError`:
-
-```go
-type RetryableError interface {
-    error
-    Retryable() bool
-}
-```
-
-When `Retryable()` returns `false`, the framework stops immediately — no retries, no fallback to other providers or tiers — and returns the error to the caller.
-
-```go
-type MyProviderError struct {
-    StatusCode int
-    Message    string
-}
-
-func (e *MyProviderError) Error() string   { return e.Message }
-func (e *MyProviderError) Retryable() bool {
-    return e.StatusCode == 429 || e.StatusCode >= 500
-}
-```
-
-If the error does **not** implement `RetryableError`, the framework treats it as retryable (safe default).
-
-**`SkipTiersOnNonRetryable`** — set to `true` to fall through to the next tier even on a non-retryable error. Useful when providers have different content policies and a second opinion is desirable.
-
-### Observability
-
-```go
-result, err := tiered.Complete(ctx, req)
-
-for _, a := range tiered.Attempts() {
-    fmt.Printf("tier=%d provider=%d retry=%d duration=%v err=%v\n",
-        a.Tier, a.ProviderIndex, a.Retry, a.Duration, a.Error)
-}
-```
-
-### Convenience constructors
-
-```go
-// Single provider with retries, no fallback
-agent.NewRetryProvider(provider, cfg)
-
-// Multiple providers in one tier, no tiering
-agent.NewFallbackProvider([]agent.ModelProvider{p1, p2}, cfg)
-
-// Defaults: 2 retries, 500ms initial delay, 2× backoff, 10s cap
-agent.NewTieredProviderWithDefaults(tiers)
-```
+**Attempt log** — `tiered.Attempts()` returns every provider call made (tier, provider index, retry number, duration, error).
 
 ## Implementing ModelProvider
 
