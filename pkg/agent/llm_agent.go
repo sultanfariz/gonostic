@@ -61,6 +61,14 @@ func (a *LLMAgent) OutputSchema() map[string]interface{} {
 	return a.outputSchema
 }
 
+// Execute runs the agent using Adaptive Output Routing (AOR).
+//
+// AOR three-path routing:
+//  1. tool_use  – model returned tool calls; execute them and loop.
+//  2. end_turn + no schema – model finished with plain text; return it directly.
+//  3. end_turn + schema   – model finished but structured output is required;
+//     make one final call with OutputSchema enforced so the model formats its
+//     answer as valid JSON matching the schema.
 func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 	result := &Result{
 		TaskID:   task.ID,
@@ -100,23 +108,20 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 			ToolCalls: []ToolCall{},
 		}
 
-		// Call LLM and track latency
-		llmStart := time.Now()
-
-		// Build completion request
+		// Build completion request (no schema on agentic turns — schema is
+		// applied only on the final structured-output extraction call).
 		req := &CompletionRequest{
-			Prompt:       task.Input,
-			Files:        task.Files,
-			Tools:        a.tools,
-			History:      history,
-			OutputSchema: a.outputSchema,
+			Prompt:  task.Input,
+			Files:   task.Files,
+			Tools:   a.tools,
+			History: history,
 		}
 
-		// Add temperature from config if available
 		if task.Config != nil && task.Config.Temperature > 0 {
 			req.Temperature = &task.Config.Temperature
 		}
 
+		llmStart := time.Now()
 		resp, err := a.model.Complete(ctx, req)
 		step.LLMLatency = time.Since(llmStart)
 		if err != nil {
@@ -127,14 +132,14 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 			return result, err
 		}
 
-		// Record token usage from response
 		step.TokenUsage = resp.Usage
-
 		step.Action = "reasoning"
 		step.Output = resp.Content
 
-		// Handle tool calls
-		if len(resp.ToolCalls) > 0 {
+		// ── AOR Path 1: tool_use ──────────────────────────────────────────────
+		// The model wants to call tools. Execute them, append results to history,
+		// and continue the loop.
+		if resp.StopReason == "tool_use" || len(resp.ToolCalls) > 0 {
 			step.Action = "tool_execution"
 			var totalToolsLatency time.Duration
 
@@ -169,7 +174,7 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 			}
 			step.ToolsLatency = totalToolsLatency
 
-			// Add results to conversation
+			// Append tool exchange to conversation history
 			history = append(history, Message{
 				Role:    "assistant",
 				Content: formatToolCalls(resp.ToolCalls),
@@ -184,44 +189,75 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 			continue
 		}
 
-		// Check for sub-agent delegation
-		if strings.Contains(strings.ToLower(resp.Content), "delegate to") {
-			for _, sub := range a.subAgents {
-				if strings.Contains(strings.ToLower(resp.Content), strings.ToLower(sub.Name())) {
-					step.Action = "delegate"
-					step.Output = fmt.Sprintf("Delegating to %s", sub.Name())
-					step.Duration = time.Since(stepStart)
-					result.Steps = append(result.Steps, step)
-
-					// Execute sub-agent
-					subResult, subErr := sub.Execute(ctx, task)
-					if subErr != nil {
-						result.Error = fmt.Sprintf("sub-agent failed: %v", subErr)
-						return result, subErr
-					}
-
-					// Merge results
-					result.Steps = append(result.Steps, subResult.Steps...)
-					result.Output = subResult.Output
-					result.Artifacts = subResult.Artifacts
-					result.Success = subResult.Success
-					return result, nil
-				}
-			}
+		// ── AOR Path 2: end_turn, no output schema ────────────────────────────
+		// The model finished naturally and no structured output is required.
+		// Return the plain-text content directly.
+		if a.outputSchema == nil {
+			step.Duration = time.Since(stepStart)
+			result.Steps = append(result.Steps, step)
+			result.Output = resp.Content
+			result.Success = true
+			result.Artifacts = a.extractArtifacts(task.State)
+			result.aggregateMetrics()
+			return result, nil
 		}
 
-		// Task complete
+		// ── AOR Path 3: end_turn, output schema present ───────────────────────
+		// The model finished but we need a structured response. Append the
+		// assistant's reasoning to history, then make one final call with
+		// OutputSchema enforced so the model re-formats its answer.
+		step.Action = "structured_extraction"
 		step.Duration = time.Since(stepStart)
 		result.Steps = append(result.Steps, step)
-		result.Output = resp.Content
+
+		// Carry reasoning forward so the model knows what it already concluded.
+		history = append(history, Message{
+			Role:    "assistant",
+			Content: resp.Content,
+		})
+		history = append(history, Message{
+			Role:    "user",
+			Content: "Please format your response according to the required output schema.",
+		})
+
+		extractStart := time.Now()
+		extractStep := ExecutionStep{
+			AgentName: a.name,
+			Action:    "schema_enforcement",
+			Timestamp: extractStart,
+			ToolCalls: []ToolCall{},
+		}
+
+		schemaReq := &CompletionRequest{
+			Prompt:       task.Input,
+			Files:        task.Files,
+			History:      history,
+			OutputSchema: a.outputSchema,
+		}
+		if task.Config != nil && task.Config.Temperature > 0 {
+			schemaReq.Temperature = &task.Config.Temperature
+		}
+
+		llmStart = time.Now()
+		schemaResp, schemaErr := a.model.Complete(ctx, schemaReq)
+		extractStep.LLMLatency = time.Since(llmStart)
+		if schemaErr != nil {
+			extractStep.Error = schemaErr.Error()
+			extractStep.Duration = time.Since(extractStart)
+			result.Steps = append(result.Steps, extractStep)
+			result.Error = fmt.Sprintf("schema enforcement LLM error: %v", schemaErr)
+			return result, schemaErr
+		}
+
+		extractStep.TokenUsage = schemaResp.Usage
+		extractStep.Output = schemaResp.Content
+		extractStep.Duration = time.Since(extractStart)
+		result.Steps = append(result.Steps, extractStep)
+
+		result.Output = schemaResp.Content
 		result.Success = true
-
-		// Extract artifacts from state
 		result.Artifacts = a.extractArtifacts(task.State)
-
-		// Aggregate metrics
 		result.aggregateMetrics()
-
 		return result, nil
 	}
 
