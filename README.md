@@ -245,36 +245,6 @@ func (p *MyProvider) Complete(ctx context.Context, req *CompletionRequest) (*Mod
 }
 ```
 
-## Utilities
-
-The package includes utility functions for JSON and map conversions:
-
-```go
-// Convert JSON string to map
-data := `{"name":"Alice","age":30}`
-m, err := agent.JSONToMap(data)
-if err != nil {
-    log.Fatal(err)
-}
-fmt.Println(m["name"]) // "Alice"
-
-// Convert map to JSON string
-result := map[string]interface{}{
-    "status": "success",
-    "count":  42,
-}
-jsonStr, err := agent.MapToJSON(result)
-// Output: {"count":42,"status":"success"}
-
-// Convert map to formatted JSON
-jsonIndented, err := agent.MapToJSONIndent(result, "", "  ")
-// Output:
-// {
-//   "count": 42,
-//   "status": "success"
-// }
-```
-
 ## License
 
 MIT
