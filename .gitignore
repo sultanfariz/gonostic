@@ -1,0 +1,7 @@
+# *.md
+# *.exe
+
+# example
+# .claude
+# .vscode
+.worktrees/
