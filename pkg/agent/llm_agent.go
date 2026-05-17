@@ -18,6 +18,7 @@ type LLMAgent struct {
 	tools        []Tool
 	subAgents    []Agent
 	maxTurns     int
+	twoPhase     bool
 }
 
 // LLMAgentConfig holds configuration for creating an LLMAgent.
@@ -30,6 +31,13 @@ type LLMAgentConfig struct {
 	Tools        []Tool
 	SubAgents    []Agent
 	MaxTurns     int
+	// TwoPhase enables two-phase execution when both Tools and OutputSchema are set.
+	// Phase 1: real tools run freely (OutputSchema suppressed).
+	// Phase 2: one extra LLM call with OutputSchema forced and no real tools.
+	// Use when your provider enforces structured output via a forced tool call,
+	// which would otherwise block real tools from being called.
+	// Default false — both fields sent every turn (standard behavior).
+	TwoPhase bool
 }
 
 // NewLLMAgent creates a new LLMAgent from the given configuration.
@@ -46,6 +54,7 @@ func NewLLMAgent(cfg LLMAgentConfig) *LLMAgent {
 		tools:        cfg.Tools,
 		subAgents:    cfg.SubAgents,
 		maxTurns:     cfg.MaxTurns,
+		twoPhase:     cfg.TwoPhase,
 	}
 }
 
@@ -92,6 +101,12 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 		userMsg,
 	}
 
+	// dualMode activates only when TwoPhase is explicitly enabled (opt-in) and the agent
+	// has both real tools and an output schema. Set TwoPhase:true in LLMAgentConfig when
+	// your provider cannot handle tools and structured output in the same turn — e.g.
+	// when structured output is enforced via a forced tool call that blocks real tools.
+	dualMode := a.twoPhase && len(a.tools) > 0 && a.outputSchema != nil
+
 	for turn := 0; turn < a.maxTurns; turn++ {
 		stepStart := time.Now()
 		step := ExecutionStep{
@@ -110,6 +125,13 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 			Tools:        a.tools,
 			History:      history,
 			OutputSchema: a.outputSchema,
+		}
+
+		// In dual-mode, suppress OutputSchema so the provider uses AUTO tool
+		// choice and real tools are reachable. OutputSchema is restored in the
+		// dedicated structured-output turn fired after tool work is complete.
+		if dualMode {
+			req.OutputSchema = nil
 		}
 
 		// Add temperature from config if available
@@ -182,6 +204,55 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 			step.Duration = time.Since(stepStart)
 			result.Steps = append(result.Steps, step)
 			continue
+		}
+
+		// No tool calls returned — LLM has finished tool-based research.
+		// In dual-mode, fire one final structured-output turn: real tools removed,
+		// OutputSchema restored so the provider forces produce_output.
+		if dualMode {
+			step.Duration = time.Since(stepStart)
+			result.Steps = append(result.Steps, step)
+
+			finalStepStart := time.Now()
+			finalStep := ExecutionStep{
+				AgentName: a.name,
+				Action:    "structured_output",
+				Timestamp: finalStepStart,
+				ToolCalls: []ToolCall{},
+			}
+
+			finalReq := &CompletionRequest{
+				Prompt:       task.Input,
+				Files:        task.Files,
+				Tools:        nil,
+				History:      history,
+				OutputSchema: a.outputSchema,
+			}
+			if task.Config != nil && task.Config.Temperature > 0 {
+				finalReq.Temperature = &task.Config.Temperature
+			}
+
+			finalLLMStart := time.Now()
+			finalResp, finalErr := a.model.Complete(ctx, finalReq)
+			finalStep.LLMLatency = time.Since(finalLLMStart)
+			if finalErr != nil {
+				finalStep.Error = finalErr.Error()
+				finalStep.Duration = time.Since(finalStepStart)
+				result.Steps = append(result.Steps, finalStep)
+				result.Error = fmt.Sprintf("LLM error on structured output turn: %v", finalErr)
+				return result, finalErr
+			}
+
+			finalStep.TokenUsage = finalResp.Usage
+			finalStep.Output = finalResp.Content
+			finalStep.Duration = time.Since(finalStepStart)
+			result.Steps = append(result.Steps, finalStep)
+
+			result.Output = finalResp.Content
+			result.Success = true
+			result.Artifacts = a.extractArtifacts(task.State)
+			result.aggregateMetrics()
+			return result, nil
 		}
 
 		// Check for sub-agent delegation
