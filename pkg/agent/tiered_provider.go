@@ -49,6 +49,10 @@ func (e *nonRetryableErr) Unwrap() error { return e.err }
 // Providers are organized in tiers (priority levels). Tier 0 is tried first.
 // Within a tier, providers are tried left-to-right. Each provider is retried
 // with exponential backoff before moving to the next.
+//
+// TieredProvider is not safe for concurrent calls to Complete. Create one instance
+// per request or goroutine. The ModelProvider instances within the tiers may
+// themselves be shared safely across instances.
 type TieredProvider struct {
 	tiers    [][]ModelProvider
 	config   RetryConfig
@@ -136,7 +140,7 @@ func (tp *TieredProvider) Complete(ctx context.Context, req *CompletionRequest) 
 			lastErr = err
 
 			if ctx.Err() != nil {
-				return nil, tp.wrapError(lastErr)
+				return nil, ctx.Err()
 			}
 		}
 	}
