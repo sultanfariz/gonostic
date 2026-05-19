@@ -119,6 +119,15 @@ type ModelProvider interface {
 	Complete(ctx context.Context, req *CompletionRequest) (*ModelResponse, error)
 }
 
+// RetryableError is implemented by provider errors that can signal
+// whether the framework should retry the call.
+// If an error does not implement this interface, the framework treats it as
+// retryable by default (safe assumption: unknown errors may be transient).
+type RetryableError interface {
+	error
+	Retryable() bool
+}
+
 // TokenUsage tracks token consumption for LLM calls (model-agnostic).
 type TokenUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
