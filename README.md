@@ -201,6 +201,33 @@ inv := &agent.Invocation{
 }
 ```
 
+## TieredProvider
+
+Wraps multiple providers with automatic per-provider retry (exponential backoff) and tiered fallback. Tier 0 is tried first; the next tier is only reached after every provider in the current one is exhausted.
+
+```go
+tiered := agent.NewTieredProvider(
+    [][]agent.ModelProvider{
+        {primary, backup}, // tier 0
+        {fallback},        // tier 1
+    },
+    agent.DefaultRetryConfig(), // 2 retries, 500ms initial, 2× backoff, 10s cap
+)
+
+// Drop-in replacement for any ModelProvider
+myAgent := agent.NewLLMAgent(agent.LLMAgentConfig{Model: tiered, ...})
+```
+
+**Non-retryable errors** — implement `RetryableError` on your error type to signal permanent failures (e.g. auth errors, content policy). The framework stops immediately without retrying or falling back.
+
+```go
+func (e *MyError) Retryable() bool { return e.StatusCode == 429 || e.StatusCode >= 500 }
+```
+
+Set `RetryConfig.SkipTiersOnNonRetryable = true` to fall through to the next tier even on permanent errors.
+
+**Attempt log** — `tiered.Attempts()` returns every provider call made (tier, provider index, retry number, duration, error).
+
 ## Implementing ModelProvider
 
 To use `LLMAgent`, implement the `ModelProvider` interface:
