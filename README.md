@@ -29,18 +29,25 @@ type Agent interface {
 task := &agent.Task{
     ID:     "task-123",
     Input:  "Summarize this document",
+    Files:  []agent.FileInput{imageFile}, // Optional multimodal inputs
     Params: map[string]interface{}{"format": "bullet"},
     State:  make(map[string]interface{}),
     Config: &agent.ExecutionConfig{
         MaxIterations:  5,
         TimeoutSeconds: 60,
+        Temperature:    0.7, // Passed to model provider
     },
 }
 
-// Result contains output, artifacts, and execution audit trail
+// Result contains output, artifacts, execution audit trail, and metrics
 result, err := myAgent.Execute(ctx, task)
 fmt.Println(result.Output)
 fmt.Println(result.Success)
+
+// Metrics tracking
+fmt.Printf("Tokens: %d, LLM Latency: %v\n",
+    result.TotalTokenUsage.TotalTokens, result.TotalLLMLatency)
+
 for _, step := range result.Steps {
     fmt.Printf("%s: %s (%v)\n", step.AgentName, step.Action, step.Duration)
 }
@@ -77,11 +84,32 @@ agent := agent.NewLLMAgent(agent.LLMAgentConfig{
 result, err := agent.Execute(ctx, task)
 ```
 
+**Structured Output:**
+Enforce JSON schema on LLM responses:
+
+```go
+agent := agent.NewLLMAgent(agent.LLMAgentConfig{
+    Name:   "extractor",
+    Prompt: "Extract user information from text",
+    OutputSchema: map[string]interface{}{
+        "type": "object",
+        "properties": map[string]interface{}{
+            "name": map[string]interface{}{"type": "string"},
+            "age":  map[string]interface{}{"type": "integer"},
+        },
+        "required": []string{"name", "age"},
+    },
+    Model: myModelProvider,
+})
+```
+
 **Features:**
 - State injection into prompts via `{placeholder}` syntax
 - Automatic tool execution and state updates
 - Sub-agent delegation (responds to "delegate to <agent-name>" in LLM output)
 - Artifact extraction from state
+- Multimodal input support (images, PDFs, etc.)
+- Structured output via JSON schema
 
 ### SequentialAgent
 
@@ -207,6 +235,40 @@ To use `LLMAgent`, implement the `ModelProvider` interface:
 ```go
 type ModelProvider interface {
     Complete(ctx context.Context, req *CompletionRequest) (*ModelResponse, error)
+}
+
+type CompletionRequest struct {
+    Prompt       string                 // User input prompt
+    Files        []FileInput            // Multimodal inputs (images, PDFs)
+    Tools        []Tool                 // Available function calling tools
+    History      []Message              // Conversation history
+    OutputSchema map[string]interface{} // JSON schema for structured output
+    Temperature  *float32               // Sampling temperature (nil = use default)
+    MaxTokens    *int                   // Max completion tokens (nil = use default)
+}
+
+type ModelResponse struct {
+    Content   string
+    ToolCalls []ToolCall
+    Reasoning string
+    Finished  bool
+    Usage     *TokenUsage // Token usage metadata
+}
+```
+
+**Example implementation:**
+```go
+func (p *MyProvider) Complete(ctx context.Context, req *CompletionRequest) (*ModelResponse, error) {
+    // Use req.OutputSchema for structured output if provided
+    if len(req.OutputSchema) > 0 {
+        // Configure your LLM for structured output
+    }
+    // Use req.Temperature if provided
+    if req.Temperature != nil {
+        // Apply temperature setting
+    }
+    // Process req.Files for multimodal input
+    // ... implementation
 }
 ```
 
