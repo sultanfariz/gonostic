@@ -45,11 +45,12 @@ func TestLLMAgentMaxTurnsTruncation(t *testing.T) {
 	provider := &truncTestProvider{}
 
 	ag := NewLLMAgent(LLMAgentConfig{
-		Name:     "trunc-agent",
-		Prompt:   "test",
-		Model:    provider,
-		Tools:    []Tool{&stubTool{}},
-		MaxTurns: 3,
+		Name:             "trunc-agent",
+		Prompt:           "test",
+		Model:            provider,
+		Tools:            []Tool{&stubTool{}},
+		MaxTurns:         3,
+		GracefulMaxTurns: true,
 	})
 
 	task := &Task{ID: "t1", Input: "go", State: map[string]interface{}{}}
@@ -73,6 +74,33 @@ func TestLLMAgentMaxTurnsTruncation(t *testing.T) {
 	}
 	if int(provider.calls.Load()) != 3 {
 		t.Errorf("expected 3 provider calls, got %d", provider.calls.Load())
+	}
+}
+
+func TestLLMAgentMaxTurnsError(t *testing.T) {
+	provider := &truncTestProvider{}
+
+	ag := NewLLMAgent(LLMAgentConfig{
+		Name:     "error-agent",
+		Prompt:   "test",
+		Model:    provider,
+		Tools:    []Tool{&stubTool{}},
+		MaxTurns: 3,
+		// GracefulMaxTurns deliberately omitted — original error behavior expected.
+	})
+
+	task := &Task{ID: "t3", Input: "go", State: map[string]interface{}{}}
+
+	result, err := ag.Execute(context.Background(), task)
+
+	if err == nil {
+		t.Fatal("expected an error when GracefulMaxTurns is false")
+	}
+	if result.Success {
+		t.Error("expected Success=false")
+	}
+	if result.Truncated {
+		t.Error("expected Truncated=false")
 	}
 }
 

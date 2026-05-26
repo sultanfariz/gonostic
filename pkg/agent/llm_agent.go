@@ -17,8 +17,9 @@ type LLMAgent struct {
 	model        ModelProvider
 	tools        []Tool
 	subAgents    []Agent
-	maxTurns     int
-	twoPhase     bool
+	maxTurns         int
+	twoPhase         bool
+	gracefulMaxTurns bool
 }
 
 // LLMAgentConfig holds configuration for creating an LLMAgent.
@@ -38,6 +39,10 @@ type LLMAgentConfig struct {
 	// which would otherwise block real tools from being called.
 	// Default false — both fields sent every turn (standard behavior).
 	TwoPhase bool
+	// GracefulMaxTurns strips tools on the final turn and returns Success=true with
+	// Truncated=true instead of an error when maxTurns is reached.
+	// Default false — original behavior (error returned) is preserved.
+	GracefulMaxTurns bool
 }
 
 // NewLLMAgent creates a new LLMAgent from the given configuration.
@@ -53,8 +58,9 @@ func NewLLMAgent(cfg LLMAgentConfig) *LLMAgent {
 		model:        cfg.Model,
 		tools:        cfg.Tools,
 		subAgents:    cfg.SubAgents,
-		maxTurns:     cfg.MaxTurns,
-		twoPhase:     cfg.TwoPhase,
+		maxTurns:         cfg.MaxTurns,
+		twoPhase:         cfg.TwoPhase,
+		gracefulMaxTurns: cfg.GracefulMaxTurns,
 	}
 }
 
@@ -140,7 +146,7 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 		}
 
 		// On the final turn, strip tools so the model cannot make further tool calls.
-		if turn == a.maxTurns-1 {
+		if a.gracefulMaxTurns && turn == a.maxTurns-1 {
 			req.Tools = nil
 		}
 
@@ -255,7 +261,7 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 
 			result.Output = finalResp.Content
 			result.Success = true
-			if turn == a.maxTurns-1 {
+			if a.gracefulMaxTurns && turn == a.maxTurns-1 {
 				result.Truncated = true
 			}
 			result.Artifacts = a.extractArtifacts(task.State)
@@ -307,6 +313,10 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 		return result, nil
 	}
 
+	if !a.gracefulMaxTurns {
+		result.Error = "max iterations reached"
+		return result, fmt.Errorf("max iterations reached")
+	}
 	if len(result.Steps) > 0 {
 		result.Output = result.Steps[len(result.Steps)-1].Output
 	}
