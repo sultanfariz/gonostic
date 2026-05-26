@@ -257,7 +257,6 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 			result.Success = true
 			if turn == a.maxTurns-1 {
 				result.Truncated = true
-				result.Error = "max turns reached, tools stripped on final turn"
 			}
 			result.Artifacts = a.extractArtifacts(task.State)
 			result.aggregateMetrics()
@@ -297,7 +296,6 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 		result.Success = true
 		if turn == a.maxTurns-1 {
 			result.Truncated = true
-			result.Error = "max turns reached, tools stripped on final turn"
 		}
 
 		// Extract artifacts from state
@@ -309,7 +307,9 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 		return result, nil
 	}
 
-	result.Error = "max turns reached, tools stripped on final turn"
+	if len(result.Steps) > 0 {
+		result.Output = result.Steps[len(result.Steps)-1].Output
+	}
 	result.Truncated = true
 	result.Success = true
 	result.aggregateMetrics()
