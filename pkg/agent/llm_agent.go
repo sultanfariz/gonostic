@@ -139,10 +139,9 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 			req.Temperature = &task.Config.Temperature
 		}
 
-		// On the final turn, strip tools to force a text-only summary.
+		// On the final turn, strip tools so the model cannot make further tool calls.
 		if turn == a.maxTurns-1 {
 			req.Tools = nil
-			req.OutputSchema = nil
 		}
 
 		resp, err := a.model.Complete(ctx, req)
