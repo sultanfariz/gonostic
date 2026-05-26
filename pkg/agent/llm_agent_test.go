@@ -45,12 +45,11 @@ func TestLLMAgentMaxTurnsTruncation(t *testing.T) {
 	provider := &truncTestProvider{}
 
 	ag := NewLLMAgent(LLMAgentConfig{
-		Name:             "trunc-agent",
-		Prompt:           "test",
-		Model:            provider,
-		Tools:            []Tool{&stubTool{}},
-		MaxTurns:         3,
-		GracefulMaxTurns: true,
+		Name:     "trunc-agent",
+		Prompt:   "test",
+		Model:    provider,
+		Tools:    []Tool{&stubTool{}},
+		MaxTurns: MaxTurnsConfig{Limit: 3, Graceful: true},
 	})
 
 	task := &Task{ID: "t1", Input: "go", State: map[string]interface{}{}}
@@ -85,8 +84,7 @@ func TestLLMAgentMaxTurnsError(t *testing.T) {
 		Prompt:   "test",
 		Model:    provider,
 		Tools:    []Tool{&stubTool{}},
-		MaxTurns: 3,
-		// GracefulMaxTurns deliberately omitted — original error behavior expected.
+		MaxTurns: MaxTurnsConfig{Limit: 3}, // Graceful omitted — original error behavior expected
 	})
 
 	task := &Task{ID: "t3", Input: "go", State: map[string]interface{}{}}
@@ -109,7 +107,7 @@ func TestLLMAgentNormalCompletion(t *testing.T) {
 		Name:     "normal-agent",
 		Prompt:   "test",
 		Model:    &textOnlyProvider{},
-		MaxTurns: 5,
+		MaxTurns: MaxTurnsConfig{Limit: 5},
 	})
 
 	task := &Task{ID: "t2", Input: "go", State: map[string]interface{}{}}

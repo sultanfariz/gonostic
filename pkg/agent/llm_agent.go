@@ -22,6 +22,12 @@ type LLMAgent struct {
 	gracefulMaxTurns bool
 }
 
+// MaxTurnsConfig controls the turn limit and what happens when it is reached.
+type MaxTurnsConfig struct {
+	Limit   int  // maximum number of turns (0 = default 10)
+	Graceful bool // if true, strip tools on the final turn and return Success=true with Truncated=true instead of an error
+}
+
 // LLMAgentConfig holds configuration for creating an LLMAgent.
 type LLMAgentConfig struct {
 	Name         string
@@ -31,7 +37,7 @@ type LLMAgentConfig struct {
 	Model        ModelProvider
 	Tools        []Tool
 	SubAgents    []Agent
-	MaxTurns     int
+	MaxTurns     MaxTurnsConfig
 	// TwoPhase enables two-phase execution when both Tools and OutputSchema are set.
 	// Phase 1: real tools run freely (OutputSchema suppressed).
 	// Phase 2: one extra LLM call with OutputSchema forced and no real tools.
@@ -39,28 +45,24 @@ type LLMAgentConfig struct {
 	// which would otherwise block real tools from being called.
 	// Default false — both fields sent every turn (standard behavior).
 	TwoPhase bool
-	// GracefulMaxTurns strips tools on the final turn and returns Success=true with
-	// Truncated=true instead of an error when maxTurns is reached.
-	// Default false — original behavior (error returned) is preserved.
-	GracefulMaxTurns bool
 }
 
 // NewLLMAgent creates a new LLMAgent from the given configuration.
 func NewLLMAgent(cfg LLMAgentConfig) *LLMAgent {
-	if cfg.MaxTurns == 0 {
-		cfg.MaxTurns = 10
+	if cfg.MaxTurns.Limit == 0 {
+		cfg.MaxTurns.Limit = 10
 	}
 	return &LLMAgent{
-		name:         cfg.Name,
-		description:  cfg.Description,
-		prompt:       cfg.Prompt,
-		outputSchema: cfg.OutputSchema,
-		model:        cfg.Model,
-		tools:        cfg.Tools,
-		subAgents:    cfg.SubAgents,
-		maxTurns:         cfg.MaxTurns,
+		name:             cfg.Name,
+		description:      cfg.Description,
+		prompt:           cfg.Prompt,
+		outputSchema:     cfg.OutputSchema,
+		model:            cfg.Model,
+		tools:            cfg.Tools,
+		subAgents:        cfg.SubAgents,
+		maxTurns:         cfg.MaxTurns.Limit,
 		twoPhase:         cfg.TwoPhase,
-		gracefulMaxTurns: cfg.GracefulMaxTurns,
+		gracefulMaxTurns: cfg.MaxTurns.Graceful,
 	}
 }
 
