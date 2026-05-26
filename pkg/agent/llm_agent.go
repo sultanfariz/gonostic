@@ -139,6 +139,12 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 			req.Temperature = &task.Config.Temperature
 		}
 
+		// On the final turn, strip tools to force a text-only summary.
+		if turn == a.maxTurns-1 {
+			req.Tools = nil
+			req.OutputSchema = nil
+		}
+
 		resp, err := a.model.Complete(ctx, req)
 		step.LLMLatency = time.Since(llmStart)
 		if err != nil {
@@ -250,6 +256,10 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 
 			result.Output = finalResp.Content
 			result.Success = true
+			if turn == a.maxTurns-1 {
+				result.Truncated = true
+				result.Error = "max turns reached, tools stripped on final turn"
+			}
 			result.Artifacts = a.extractArtifacts(task.State)
 			result.aggregateMetrics()
 			return result, nil
@@ -286,6 +296,10 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 		result.Steps = append(result.Steps, step)
 		result.Output = resp.Content
 		result.Success = true
+		if turn == a.maxTurns-1 {
+			result.Truncated = true
+			result.Error = "max turns reached, tools stripped on final turn"
+		}
 
 		// Extract artifacts from state
 		result.Artifacts = a.extractArtifacts(task.State)
@@ -296,8 +310,11 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 		return result, nil
 	}
 
-	result.Error = "max iterations reached"
-	return result, fmt.Errorf("max iterations reached")
+	result.Error = "max turns reached, tools stripped on final turn"
+	result.Truncated = true
+	result.Success = true
+	result.aggregateMetrics()
+	return result, nil
 }
 
 func (a *LLMAgent) injectState(state map[string]interface{}) string {
