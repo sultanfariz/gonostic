@@ -43,6 +43,7 @@ type Result struct {
 	Artifacts     []Artifact             // Generated files, images, etc.
 	Metadata      map[string]interface{} // Processing metadata
 	Error         string
+	Truncated     bool                   // true when max turns reached; tools were stripped on the final turn
 	Steps         []ExecutionStep        // Audit trail
 
 	// Aggregated metrics

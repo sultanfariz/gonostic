@@ -17,8 +17,15 @@ type LLMAgent struct {
 	model        ModelProvider
 	tools        []Tool
 	subAgents    []Agent
-	maxTurns     int
-	twoPhase     bool
+	maxTurns         int
+	twoPhase         bool
+	gracefulMaxTurns bool
+}
+
+// MaxTurnsConfig controls the turn limit and what happens when it is reached.
+type MaxTurnsConfig struct {
+	Limit   int  // maximum number of turns (0 = default 10)
+	Graceful bool // if true, strip tools on the final turn and return Success=true with Truncated=true instead of an error
 }
 
 // LLMAgentConfig holds configuration for creating an LLMAgent.
@@ -30,7 +37,7 @@ type LLMAgentConfig struct {
 	Model        ModelProvider
 	Tools        []Tool
 	SubAgents    []Agent
-	MaxTurns     int
+	MaxTurns     MaxTurnsConfig
 	// TwoPhase enables two-phase execution when both Tools and OutputSchema are set.
 	// Phase 1: real tools run freely (OutputSchema suppressed).
 	// Phase 2: one extra LLM call with OutputSchema forced and no real tools.
@@ -42,19 +49,20 @@ type LLMAgentConfig struct {
 
 // NewLLMAgent creates a new LLMAgent from the given configuration.
 func NewLLMAgent(cfg LLMAgentConfig) *LLMAgent {
-	if cfg.MaxTurns == 0 {
-		cfg.MaxTurns = 10
+	if cfg.MaxTurns.Limit == 0 {
+		cfg.MaxTurns.Limit = 10
 	}
 	return &LLMAgent{
-		name:         cfg.Name,
-		description:  cfg.Description,
-		prompt:       cfg.Prompt,
-		outputSchema: cfg.OutputSchema,
-		model:        cfg.Model,
-		tools:        cfg.Tools,
-		subAgents:    cfg.SubAgents,
-		maxTurns:     cfg.MaxTurns,
-		twoPhase:     cfg.TwoPhase,
+		name:             cfg.Name,
+		description:      cfg.Description,
+		prompt:           cfg.Prompt,
+		outputSchema:     cfg.OutputSchema,
+		model:            cfg.Model,
+		tools:            cfg.Tools,
+		subAgents:        cfg.SubAgents,
+		maxTurns:         cfg.MaxTurns.Limit,
+		twoPhase:         cfg.TwoPhase,
+		gracefulMaxTurns: cfg.MaxTurns.Graceful,
 	}
 }
 
@@ -137,6 +145,11 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 		// Add temperature from config if available
 		if task.Config != nil && task.Config.Temperature > 0 {
 			req.Temperature = &task.Config.Temperature
+		}
+
+		// On the final turn, strip tools so the model cannot make further tool calls.
+		if a.gracefulMaxTurns && turn == a.maxTurns-1 {
+			req.Tools = nil
 		}
 
 		resp, err := a.model.Complete(ctx, req)
@@ -250,6 +263,9 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 
 			result.Output = finalResp.Content
 			result.Success = true
+			if a.gracefulMaxTurns && turn == a.maxTurns-1 {
+				result.Truncated = true
+			}
 			result.Artifacts = a.extractArtifacts(task.State)
 			result.aggregateMetrics()
 			return result, nil
@@ -286,6 +302,9 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 		result.Steps = append(result.Steps, step)
 		result.Output = resp.Content
 		result.Success = true
+		if turn == a.maxTurns-1 {
+			result.Truncated = true
+		}
 
 		// Extract artifacts from state
 		result.Artifacts = a.extractArtifacts(task.State)
@@ -296,8 +315,17 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 		return result, nil
 	}
 
-	result.Error = "max iterations reached"
-	return result, fmt.Errorf("max iterations reached")
+	if !a.gracefulMaxTurns {
+		result.Error = "max iterations reached"
+		return result, fmt.Errorf("max iterations reached")
+	}
+	if len(result.Steps) > 0 {
+		result.Output = result.Steps[len(result.Steps)-1].Output
+	}
+	result.Truncated = true
+	result.Success = true
+	result.aggregateMetrics()
+	return result, nil
 }
 
 func (a *LLMAgent) injectState(state map[string]interface{}) string {
