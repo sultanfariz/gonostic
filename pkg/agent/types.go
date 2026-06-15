@@ -54,18 +54,19 @@ type Result struct {
 
 // ExecutionStep tracks what happened during a single turn.
 type ExecutionStep struct {
-	AgentName       string
-	Action          string
-	Input           interface{}
-	Output          interface{}
-	Error           string
-	Duration        time.Duration // Total step duration (LLM + tools)
-	LLMLatency      time.Duration // Time spent on LLM call
-	ToolsLatency    time.Duration // Time spent on tool execution (sum of all tools)
-	Timestamp       time.Time
-	TokenUsage      *TokenUsage // Token usage for LLM call in this step
-	ToolCalls       []ToolCall
-	StateDelta      map[string]interface{}
+	AgentName    string
+	Action       string
+	Input        interface{}
+	Output       interface{}
+	Error        string
+	Duration     time.Duration // Total step duration (LLM + tools)
+	LLMLatency   time.Duration // Time spent on LLM call
+	ToolsLatency time.Duration // Time spent on tool execution (sum of all tools)
+	Timestamp    time.Time
+	TokenUsage   *TokenUsage // Token usage for LLM call in this step
+	ToolCalls    []ToolCall
+	StateDelta   map[string]interface{}
+	StopReason   string // Provider-specific stop/finish reason propagated from ModelResponse
 }
 
 // ExecutionConfig controls how a task is executed.
@@ -138,11 +139,12 @@ type TokenUsage struct {
 
 // ModelResponse is the response from an LLM.
 type ModelResponse struct {
-	Content   string
-	ToolCalls []ToolCall
-	Reasoning string
-	Finished  bool
-	Usage     *TokenUsage // Token usage metadata (provider-dependent)
+	Content    string
+	ToolCalls  []ToolCall
+	Reasoning  string
+	Finished   bool
+	Usage      *TokenUsage // Token usage metadata (provider-dependent)
+	StopReason string      // Provider-specific stop/finish reason (e.g. "end_turn", "max_tokens", "STOP")
 }
 
 // Message represents a conversation message.

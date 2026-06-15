@@ -162,8 +162,9 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 			return result, err
 		}
 
-		// Record token usage from response
+		// Record token usage and stop reason from response
 		step.TokenUsage = resp.Usage
+		step.StopReason = resp.StopReason
 
 		step.Action = "reasoning"
 		step.Output = resp.Content
@@ -257,6 +258,7 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 			}
 
 			finalStep.TokenUsage = finalResp.Usage
+			finalStep.StopReason = finalResp.StopReason
 			finalStep.Output = finalResp.Content
 			finalStep.Duration = time.Since(finalStepStart)
 			result.Steps = append(result.Steps, finalStep)
