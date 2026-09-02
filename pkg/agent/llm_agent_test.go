@@ -127,3 +127,77 @@ func TestLLMAgentNormalCompletion(t *testing.T) {
 		t.Errorf("expected 1 step, got %d", len(result.Steps))
 	}
 }
+
+// callsProvider returns a response carrying a ProviderCalls breakdown, as a
+// provider that fanned out internally would.
+type callsProvider struct {
+	gotSchema bool
+	gotTools  int
+}
+
+func (p *callsProvider) Complete(_ context.Context, req *CompletionRequest) (*ModelResponse, error) {
+	p.gotSchema = req.OutputSchema != nil
+	p.gotTools = len(req.Tools)
+	return &ModelResponse{
+		Content:    `{"ok":true}`,
+		Finished:   true,
+		StopReason: "end_turn",
+		Usage:      &TokenUsage{TotalTokens: 128},
+		Calls: []ProviderCall{
+			{Label: "two_phase:tools", Usage: &TokenUsage{TotalTokens: 120}},
+			{Label: "two_phase:schema", Usage: &TokenUsage{TotalTokens: 8}},
+		},
+	}, nil
+}
+
+func TestLLMAgentPropagatesProviderCalls(t *testing.T) {
+	provider := &callsProvider{}
+	agent := NewLLMAgent(LLMAgentConfig{
+		Name:         "test",
+		Model:        provider,
+		Tools:        []Tool{&stubTool{}},
+		OutputSchema: map[string]interface{}{"type": "object"},
+	})
+
+	result, err := agent.Execute(context.Background(), &Task{ID: "t1", State: map[string]interface{}{}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Steps) != 1 {
+		t.Fatalf("expected 1 step, got %d", len(result.Steps))
+	}
+	calls := result.Steps[0].ProviderCalls
+	if len(calls) != 2 {
+		t.Fatalf("expected step to carry 2 provider calls, got %d", len(calls))
+	}
+	if calls[0].Label != "two_phase:tools" || calls[1].Label != "two_phase:schema" {
+		t.Errorf("labels not propagated: %+v", calls)
+	}
+	if result.TotalTokenUsage.TotalTokens != 128 {
+		t.Errorf("step usage should stay the merged total, got %+v", result.TotalTokenUsage)
+	}
+}
+
+// TestLLMAgentSendsToolsAndSchemaTogether pins the behavior change from
+// removing dualMode: the agent no longer suppresses OutputSchema when tools
+// are present. Providers that cannot serve both must be wrapped in
+// WithTwoPhase instead.
+func TestLLMAgentSendsToolsAndSchemaTogether(t *testing.T) {
+	provider := &callsProvider{}
+	agent := NewLLMAgent(LLMAgentConfig{
+		Name:         "test",
+		Model:        provider,
+		Tools:        []Tool{&stubTool{}},
+		OutputSchema: map[string]interface{}{"type": "object"},
+	})
+
+	if _, err := agent.Execute(context.Background(), &Task{ID: "t1", State: map[string]interface{}{}}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !provider.gotSchema {
+		t.Error("OutputSchema must reach the provider unsuppressed")
+	}
+	if provider.gotTools != 1 {
+		t.Errorf("Tools must reach the provider, got %d", provider.gotTools)
+	}
+}
