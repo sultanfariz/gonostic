@@ -67,6 +67,11 @@ type ExecutionStep struct {
 	ToolCalls    []ToolCall
 	StateDelta   map[string]interface{}
 	StopReason   string // Provider-specific stop/finish reason propagated from ModelResponse
+
+	// ProviderCalls breaks down the LLM calls behind this step when the
+	// provider made more than one. Nil for the single-call case. LLMLatency
+	// and TokenUsage cover the whole step; these attribute them per call.
+	ProviderCalls []ProviderCall
 }
 
 // ExecutionConfig controls how a task is executed.
@@ -137,14 +142,35 @@ type TokenUsage struct {
 	TotalTokens      int `json:"total_tokens"`
 }
 
+// ProviderCall records one underlying LLM call made inside a single
+// ModelProvider.Complete. Providers that fan out internally — a two-phase
+// schema turn, a tiered retry or fallback — append one entry per real call so
+// the per-call breakdown survives, since the caller only ever sees one
+// ModelResponse per Complete.
+//
+// Leave nil when Complete made exactly one call: the response's own fields
+// already describe it.
+type ProviderCall struct {
+	Label      string        // Which call this was, e.g. "two_phase:tools", "two_phase:schema"
+	Latency    time.Duration // Wall-clock time for this call
+	Usage      *TokenUsage   // Token usage for this call alone
+	StopReason string        // Stop reason for this call alone
+	Content    string        // Content returned by this call alone
+	Err        string        // Non-empty if this call failed
+}
+
 // ModelResponse is the response from an LLM.
 type ModelResponse struct {
 	Content    string
 	ToolCalls  []ToolCall
 	Reasoning  string
 	Finished   bool
-	Usage      *TokenUsage // Token usage metadata (provider-dependent)
+	Usage      *TokenUsage // Token usage metadata (provider-dependent). Summed across Calls when set.
 	StopReason string      // Provider-specific stop/finish reason (e.g. "end_turn", "max_tokens", "STOP")
+
+	// Calls breaks down the underlying calls when the provider made more than
+	// one for this response. Nil for the single-call case.
+	Calls []ProviderCall
 }
 
 // Message represents a conversation message.

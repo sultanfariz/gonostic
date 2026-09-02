@@ -1,6 +1,9 @@
 package agent
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // twoPhaseProvider decorates a ModelProvider that cannot honor Tools and
 // OutputSchema in the same request.
@@ -35,7 +38,9 @@ func (p *twoPhaseProvider) Complete(ctx context.Context, req *CompletionRequest)
 	toolReq := *req
 	toolReq.OutputSchema = nil
 
+	toolStart := time.Now()
 	toolResp, err := p.inner.Complete(ctx, &toolReq)
+	toolLatency := time.Since(toolStart)
 	if err != nil {
 		return nil, err
 	}
@@ -54,16 +59,36 @@ func (p *twoPhaseProvider) Complete(ctx context.Context, req *CompletionRequest)
 		Content: toolResp.Content,
 	})
 
+	finalStart := time.Now()
 	finalResp, err := p.inner.Complete(ctx, &finalReq)
+	finalLatency := time.Since(finalStart)
 	if err != nil {
 		return nil, err
 	}
 
 	// Two calls happened for one turn, but the caller (LLMAgent) records only
 	// the single ModelResponse returned here. Without summing, phase 1's
-	// tokens vanish from execution steps and cost tracking.
-	finalResp.Usage = sumTokenUsage(toolResp.Usage, finalResp.Usage)
-	return finalResp, nil
+	// tokens vanish from execution steps and cost tracking. Calls keeps the
+	// per-call split that the summed totals would otherwise hide.
+	out := *finalResp
+	out.Usage = sumTokenUsage(toolResp.Usage, finalResp.Usage)
+	out.Calls = []ProviderCall{
+		{
+			Label:      "two_phase:tools",
+			Latency:    toolLatency,
+			Usage:      toolResp.Usage,
+			StopReason: toolResp.StopReason,
+			Content:    toolResp.Content,
+		},
+		{
+			Label:      "two_phase:schema",
+			Latency:    finalLatency,
+			Usage:      finalResp.Usage,
+			StopReason: finalResp.StopReason,
+			Content:    finalResp.Content,
+		},
+	}
+	return &out, nil
 }
 
 func sumTokenUsage(a, b *TokenUsage) *TokenUsage {

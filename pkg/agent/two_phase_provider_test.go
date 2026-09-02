@@ -167,3 +167,94 @@ func TestSumTokenUsageNilHandling(t *testing.T) {
 		t.Errorf("both nil should return nil, got %+v", got)
 	}
 }
+
+func TestTwoPhaseRecordsProviderCalls(t *testing.T) {
+	inner := &recordingProvider{responses: []ModelResponse{
+		{Content: "prose", StopReason: "stop", Usage: &TokenUsage{TotalTokens: 120}},
+		{Content: `{"ok":true}`, StopReason: "end_turn", Usage: &TokenUsage{TotalTokens: 8}},
+	}}
+
+	resp, err := WithTwoPhase(inner).Complete(context.Background(), &CompletionRequest{
+		Tools: twoPhaseTools(), OutputSchema: twoPhaseSchema,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.Calls) != 2 {
+		t.Fatalf("expected 2 provider calls, got %d", len(resp.Calls))
+	}
+
+	// Phase 1's content and stop reason are invisible on the merged response.
+	// Calls is the only place they survive.
+	if resp.Calls[0].Label != "two_phase:tools" || resp.Calls[0].Content != "prose" ||
+		resp.Calls[0].StopReason != "stop" || resp.Calls[0].Usage.TotalTokens != 120 {
+		t.Errorf("phase 1 call: %+v", resp.Calls[0])
+	}
+	if resp.Calls[1].Label != "two_phase:schema" || resp.Calls[1].Content != `{"ok":true}` ||
+		resp.Calls[1].StopReason != "end_turn" || resp.Calls[1].Usage.TotalTokens != 8 {
+		t.Errorf("phase 2 call: %+v", resp.Calls[1])
+	}
+	if resp.Usage.TotalTokens != 128 {
+		t.Errorf("merged usage: %+v", resp.Usage)
+	}
+}
+
+func TestTwoPhaseSingleCallLeavesCallsNil(t *testing.T) {
+	cases := map[string]CompletionRequest{
+		"tool call returned": {Tools: twoPhaseTools(), OutputSchema: twoPhaseSchema},
+		"passthrough":        {Prompt: "hi"},
+	}
+	for name, req := range cases {
+		t.Run(name, func(t *testing.T) {
+			inner := &recordingProvider{responses: []ModelResponse{
+				{Content: "x", ToolCalls: []ToolCall{{Name: "stub_tool"}}},
+			}}
+			if name == "passthrough" {
+				inner.responses[0].ToolCalls = nil
+			}
+			resp, err := WithTwoPhase(inner).Complete(context.Background(), &req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if resp.Calls != nil {
+				t.Errorf("single-call response should leave Calls nil, got %+v", resp.Calls)
+			}
+		})
+	}
+}
+
+func TestTwoPhaseDoesNotMutateInnerResponse(t *testing.T) {
+	// A provider that hands back a response it also retains must not see its
+	// Usage rewritten by the decorator's summing.
+	shared := &ModelResponse{Content: "final", Usage: &TokenUsage{TotalTokens: 8}}
+	inner := &sharedRespProvider{first: &ModelResponse{Content: "prose", Usage: &TokenUsage{TotalTokens: 120}}, second: shared}
+
+	resp, err := WithTwoPhase(inner).Complete(context.Background(), &CompletionRequest{
+		Tools: twoPhaseTools(), OutputSchema: twoPhaseSchema,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Usage.TotalTokens != 128 {
+		t.Errorf("returned usage: %+v", resp.Usage)
+	}
+	if shared.Usage.TotalTokens != 8 {
+		t.Errorf("inner response mutated: %+v", shared.Usage)
+	}
+	if shared.Calls != nil {
+		t.Error("inner response gained Calls")
+	}
+}
+
+type sharedRespProvider struct {
+	first, second *ModelResponse
+	n             int
+}
+
+func (p *sharedRespProvider) Complete(_ context.Context, _ *CompletionRequest) (*ModelResponse, error) {
+	p.n++
+	if p.n == 1 {
+		return p.first, nil
+	}
+	return p.second, nil
+}
