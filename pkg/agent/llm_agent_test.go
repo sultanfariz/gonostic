@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 )
@@ -34,11 +35,11 @@ func (p *textOnlyProvider) Complete(_ context.Context, _ *CompletionRequest) (*M
 // stubTool satisfies the Tool interface.
 type stubTool struct{}
 
-func (t *stubTool) Name() string                                                    { return "stub_tool" }
-func (t *stubTool) Description() string                                             { return "stub" }
-func (t *stubTool) Schema() interface{}                                             { return nil }
-func (t *stubTool) Execute(_ context.Context, _ map[string]interface{}) (interface{}, error) {
-	return "stub result", nil
+func (t *stubTool) Name() string        { return "stub_tool" }
+func (t *stubTool) Description() string { return "stub" }
+func (t *stubTool) Schema() interface{} { return nil }
+func (t *stubTool) Execute(_ context.Context, _ map[string]interface{}) (ToolResult, error) {
+	return ToolResult{Data: "stub result"}, nil
 }
 
 func TestLLMAgentMaxTurnsTruncation(t *testing.T) {
@@ -125,5 +126,94 @@ func TestLLMAgentNormalCompletion(t *testing.T) {
 	}
 	if len(result.Steps) != 1 {
 		t.Errorf("expected 1 step, got %d", len(result.Steps))
+	}
+}
+
+func TestFormatToolResults(t *testing.T) {
+	tests := []struct {
+		name  string
+		calls []ToolCall
+		want  string
+	}{
+		{
+			name:  "Text_set_with_data",
+			calls: []ToolCall{{Name: "t", Result: ToolResult{Text: "hello", Data: "ignored"}}},
+			want:  "hello",
+		},
+		{
+			name:  "Text_empty_data_string",
+			calls: []ToolCall{{Name: "t", Result: ToolResult{Data: "payload"}}},
+			want:  "t result: payload",
+		},
+		{
+			name:  "Text_empty_data_nil",
+			calls: []ToolCall{{Name: "t", Result: ToolResult{}}},
+			want:  "t result: ",
+		},
+		{
+			name:  "Error_set",
+			calls: []ToolCall{{Name: "t", Error: errors.New("boom")}},
+			want:  "t failed: boom",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatToolResults(tt.calls); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// namedTool returns a fixed ToolResult under a given name.
+type namedTool struct {
+	name string
+	res  ToolResult
+}
+
+func (t *namedTool) Name() string        { return t.name }
+func (t *namedTool) Description() string { return "named" }
+func (t *namedTool) Schema() interface{} { return nil }
+func (t *namedTool) Execute(_ context.Context, _ map[string]interface{}) (ToolResult, error) {
+	return t.res, nil
+}
+
+// toolThenTextProvider returns the given tool calls once, then text.
+type toolThenTextProvider struct {
+	calls atomic.Int32
+	tools []ToolCall
+}
+
+func (p *toolThenTextProvider) Complete(_ context.Context, _ *CompletionRequest) (*ModelResponse, error) {
+	if p.calls.Add(1) == 1 {
+		return &ModelResponse{ToolCalls: p.tools}, nil
+	}
+	return &ModelResponse{Content: "done", Finished: true}, nil
+}
+
+func TestLLMAgentStateMerge(t *testing.T) {
+	provider := &toolThenTextProvider{tools: []ToolCall{
+		{ID: "1", Name: "map_tool", Arguments: map[string]interface{}{}},
+		{ID: "2", Name: "str_tool", Arguments: map[string]interface{}{}},
+	}}
+	ag := NewLLMAgent(LLMAgentConfig{
+		Name:   "merge-agent",
+		Prompt: "test",
+		Model:  provider,
+		Tools: []Tool{
+			&namedTool{name: "map_tool", res: ToolResult{Data: map[string]interface{}{"k": "v"}}},
+			&namedTool{name: "str_tool", res: ToolResult{Data: "x"}},
+		},
+	})
+	task := &Task{ID: "t1", Input: "go", State: map[string]interface{}{}}
+
+	if _, err := ag.Execute(context.Background(), task); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if task.State["k"] != "v" {
+		t.Errorf("State[k] = %v, want v", task.State["k"])
+	}
+	if task.State["str_tool_result"] != "x" {
+		t.Errorf("State[str_tool_result] = %v, want x", task.State["str_tool_result"])
 	}
 }

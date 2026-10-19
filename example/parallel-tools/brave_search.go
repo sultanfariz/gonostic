@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/sultanfariz/gonostic/pkg/agent"
 )
 
 // ============================================================
@@ -156,10 +158,10 @@ func (t *BraveSearchTool) Schema() interface{} {
 	}
 }
 
-func (t *BraveSearchTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+func (t *BraveSearchTool) Execute(ctx context.Context, args map[string]interface{}) (agent.ToolResult, error) {
 	query, ok := args["query"].(string)
 	if !ok {
-		return nil, fmt.Errorf("query is required and must be a string")
+		return agent.ToolResult{}, fmt.Errorf("query is required and must be a string")
 	}
 
 	params := WebSearchParams{
@@ -179,7 +181,11 @@ func (t *BraveSearchTool) Execute(ctx context.Context, args map[string]interface
 		params.Freshness = freshness
 	}
 
-	return t.Search(ctx, params)
+	resp, err := t.Search(ctx, params)
+	if err != nil {
+		return agent.ToolResult{}, err
+	}
+	return agent.ToolResult{Data: resp}, nil
 }
 
 func (t *BraveSearchTool) Search(ctx context.Context, req WebSearchParams) (SearchResponse, error) {

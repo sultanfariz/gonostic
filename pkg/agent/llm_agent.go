@@ -191,13 +191,13 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 				tc.Error = tcErr
 
 				// Update task state with result
-				if tcErr == nil && tcResult != nil {
-					if resultMap, ok := tcResult.(map[string]interface{}); ok {
+				if tcErr == nil && tcResult.Data != nil {
+					if resultMap, ok := tcResult.Data.(map[string]interface{}); ok {
 						for k, v := range resultMap {
 							task.State[k] = v
 						}
 					} else {
-						task.State[tc.Name+"_result"] = tcResult
+						task.State[tc.Name+"_result"] = tcResult.Data
 					}
 				}
 
@@ -397,8 +397,12 @@ func formatToolResults(calls []ToolCall) string {
 	for _, tc := range calls {
 		if tc.Error != nil {
 			parts = append(parts, fmt.Sprintf("%s failed: %v", tc.Name, tc.Error))
+		} else if tc.Result.Text != "" {
+			parts = append(parts, tc.Result.Text)
+		} else if tc.Result.Data != nil {
+			parts = append(parts, fmt.Sprintf("%s result: %v", tc.Name, tc.Result.Data))
 		} else {
-			parts = append(parts, fmt.Sprintf("%s result: %v", tc.Name, tc.Result))
+			parts = append(parts, tc.Name+" result: ")
 		}
 	}
 	return strings.Join(parts, "\n")
