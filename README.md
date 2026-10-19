@@ -67,7 +67,7 @@ type Tool interface {
 
 // ToolResult is what a Tool returns.
 type ToolResult struct {
-    // Text is what the model reads. When empty and Data is not nil, fmt.Sprint(Data) is used.
+    // Text is what the model reads. When empty, the model reads "<name> result: " followed by Data.
     Text string
     // Parts are extra content, such as images, sent to the model with the tool
     // results on the next user message. Parts are never serialised.
@@ -303,7 +303,7 @@ func (p *MyProvider) Complete(ctx context.Context, req *CompletionRequest) (*Mod
 
 Three edits:
 
-1. Change the return type of every `Tool.Execute` from `(interface{}, error)` to `(ToolResult, error)`. Wrap the old value in `ToolResult{Data: value}` or `ToolResult{Text: text}`.
+1. Change the return type of every `Tool.Execute` from `(interface{}, error)` to `(ToolResult, error)`. Wrap the old value in `ToolResult{Data: value}` or `ToolResult{Text: text}`. Use `Data` to keep the old `Task.State` behaviour, because a result with only `Text` does not write to State.
 2. `ToolCall.Result` is now a `ToolResult`. Read the old value from `tc.Result.Data`.
 3. Set `Part.Data` to `[]byte` for images.
 

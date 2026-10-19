@@ -98,7 +98,7 @@ type ToolCall struct {
 
 // ToolResult is what a Tool returns.
 type ToolResult struct {
-	// Text is what the model reads. When empty and Data is not nil, fmt.Sprint(Data) is used.
+	// Text is what the model reads. When empty, the model reads "<name> result: " followed by Data.
 	Text string
 	// Parts are extra content, such as images, sent to the model with the tool
 	// results on the next user message. Parts are never serialised.
