@@ -2,7 +2,10 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -215,5 +218,128 @@ func TestLLMAgentStateMerge(t *testing.T) {
 	}
 	if task.State["str_tool_result"] != "x" {
 		t.Errorf("State[str_tool_result] = %v, want x", task.State["str_tool_result"])
+	}
+}
+
+// recordingProvider returns the given tool calls once, then text. It stores a
+// copy of the History slice of every request.
+type recordingProvider struct {
+	calls   atomic.Int32
+	tools   []ToolCall
+	history [][]Message
+}
+
+func (p *recordingProvider) Complete(_ context.Context, req *CompletionRequest) (*ModelResponse, error) {
+	p.history = append(p.history, append([]Message(nil), req.History...))
+	if p.calls.Add(1) == 1 {
+		return &ModelResponse{ToolCalls: p.tools}, nil
+	}
+	return &ModelResponse{Content: "done", Finished: true}, nil
+}
+
+// failingTool returns a result and an error.
+type failingTool struct {
+	name string
+	res  ToolResult
+}
+
+func (t *failingTool) Name() string        { return t.name }
+func (t *failingTool) Description() string { return "failing" }
+func (t *failingTool) Schema() interface{} { return nil }
+func (t *failingTool) Execute(_ context.Context, _ map[string]interface{}) (ToolResult, error) {
+	return t.res, errors.New("boom")
+}
+
+func runRecorded(t *testing.T, provider *recordingProvider, tools ...Tool) []Message {
+	t.Helper()
+	ag := NewLLMAgent(LLMAgentConfig{Name: "rec", Prompt: "test", Model: provider, Tools: tools})
+	task := &Task{ID: "t1", Input: "go", State: map[string]interface{}{}}
+	if _, err := ag.Execute(context.Background(), task); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(provider.history) != 2 {
+		t.Fatalf("got %d requests, want 2", len(provider.history))
+	}
+	return provider.history[1]
+}
+
+func TestLLMAgentToolResultParts(t *testing.T) {
+	provider := &recordingProvider{tools: []ToolCall{{ID: "1", Name: "snap", Arguments: map[string]interface{}{}}}}
+	h := runRecorded(t, provider, &namedTool{name: "snap", res: ToolResult{
+		Text:  "frame ok",
+		Parts: []Part{{Type: "image/png", Data: []byte{1, 2, 3}}},
+	}})
+
+	last := h[len(h)-1]
+	if last.Role != "user" || !strings.Contains(last.Content, "frame ok") {
+		t.Errorf("last message = %+v, want user message containing 'frame ok'", last)
+	}
+	if len(last.Parts) != 1 || last.Parts[0].Type != "image/png" || !reflect.DeepEqual(last.Parts[0].Data, []byte{1, 2, 3}) {
+		t.Errorf("Parts = %+v, want one image/png part with data [1 2 3]", last.Parts)
+	}
+	if !reflect.DeepEqual(h[:len(provider.history[0])], provider.history[0]) {
+		t.Errorf("earlier messages changed: %+v vs %+v", h[:len(provider.history[0])], provider.history[0])
+	}
+}
+
+func TestLLMAgentToolResultPartsOrder(t *testing.T) {
+	provider := &recordingProvider{tools: []ToolCall{
+		{ID: "1", Name: "a", Arguments: map[string]interface{}{}},
+		{ID: "2", Name: "b", Arguments: map[string]interface{}{}},
+	}}
+	h := runRecorded(t, provider,
+		&namedTool{name: "a", res: ToolResult{Parts: []Part{{Type: "image/png", Data: []byte{1}}}}},
+		&namedTool{name: "b", res: ToolResult{Parts: []Part{{Type: "image/jpeg", Data: []byte{2}}}}},
+	)
+
+	parts := h[len(h)-1].Parts
+	if len(parts) != 2 || parts[0].Type != "image/png" || parts[1].Type != "image/jpeg" {
+		t.Errorf("Parts = %+v, want [image/png, image/jpeg] in call order", parts)
+	}
+}
+
+func TestLLMAgentFailedToolNoParts(t *testing.T) {
+	provider := &recordingProvider{tools: []ToolCall{{ID: "1", Name: "bad", Arguments: map[string]interface{}{}}}}
+	h := runRecorded(t, provider, &failingTool{name: "bad", res: ToolResult{
+		Parts: []Part{{Type: "image/png", Data: []byte{1}}},
+	}})
+
+	last := h[len(h)-1]
+	if len(last.Parts) != 0 {
+		t.Errorf("Parts = %+v, want none for failed tool", last.Parts)
+	}
+	if !strings.Contains(last.Content, "bad failed: boom") {
+		t.Errorf("Content = %q, want failure text", last.Content)
+	}
+}
+
+func TestToolResultPartsNotSerialised(t *testing.T) {
+	b, err := json.Marshal(ToolCall{Name: "snap", Result: ToolResult{
+		Text:  "ok",
+		Parts: []Part{{Type: "image/png", Data: []byte{1, 2, 3}}},
+	}})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(b), "Parts") {
+		t.Errorf("json %s contains Parts", b)
+	}
+}
+
+func TestLLMAgentNilState(t *testing.T) {
+	provider := &toolThenTextProvider{tools: []ToolCall{{ID: "1", Name: "map_tool", Arguments: map[string]interface{}{}}}}
+	ag := NewLLMAgent(LLMAgentConfig{
+		Name:   "nil-state",
+		Prompt: "test",
+		Model:  provider,
+		Tools:  []Tool{&namedTool{name: "map_tool", res: ToolResult{Data: map[string]interface{}{"k": "v"}}}},
+	})
+	task := &Task{ID: "t1", Input: "go", State: nil}
+
+	if _, err := ag.Execute(context.Background(), task); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if task.State["k"] != "v" {
+		t.Errorf("State[k] = %v, want v", task.State["k"])
 	}
 }

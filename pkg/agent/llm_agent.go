@@ -79,6 +79,9 @@ func (a *LLMAgent) OutputSchema() map[string]interface{} {
 }
 
 func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
+	if task.State == nil {
+		task.State = make(map[string]interface{})
+	}
 	result := &Result{
 		TaskID:   task.ID,
 		Success:  false,
@@ -173,6 +176,7 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 		if len(resp.ToolCalls) > 0 {
 			step.Action = "tool_execution"
 			var totalToolsLatency time.Duration
+			var resultParts []Part
 
 			for i := range resp.ToolCalls {
 				tc := &resp.ToolCalls[i]
@@ -189,6 +193,10 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 				totalToolsLatency += tc.Duration
 				tc.Result = tcResult
 				tc.Error = tcErr
+
+				if tcErr == nil {
+					resultParts = append(resultParts, tcResult.Parts...)
+				}
 
 				// Update task state with result
 				if tcErr == nil && tcResult.Data != nil {
@@ -213,6 +221,7 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 			history = append(history, Message{
 				Role:    "user",
 				Content: formatToolResults(resp.ToolCalls),
+				Parts:   resultParts,
 			})
 
 			step.Duration = time.Since(stepStart)
