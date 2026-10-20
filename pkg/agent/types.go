@@ -29,7 +29,7 @@ type Task struct {
 	Input       string                 // User's minimal prompt
 	Files       []FileInput            // Files to pass as input to LLM (images, PDFs, etc.)
 	Params      map[string]interface{} // Additional parameters
-	State       TaskState // Working state
+	State       TaskState              // Working state
 	Config      *ExecutionConfig
 	StartedAt   time.Time
 	CompletedAt time.Time
