@@ -300,7 +300,7 @@ func (p *MyProvider) Complete(ctx context.Context, req *CompletionRequest) (*Mod
 
 ## Migrating from v0.2.x
 
-Three edits:
+Four edits:
 
 1. Change the return type of every `Tool.Execute` from `(interface{}, error)` to `(ToolResult, error)`. Wrap the old value in `ToolResult{Data: value}` or `ToolResult{Text: text}`. Use `Data` to keep the old `Task.State` behaviour, because a result with only `Text` does not write to State.
 2. `ToolCall.Result` is now a `ToolResult`. Read the old value from `tc.Result.Data`.
