@@ -59,13 +59,13 @@ func (t *PineconeSearchTool) Schema() interface{} {
 	}
 }
 
-func (t *PineconeSearchTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+func (t *PineconeSearchTool) Execute(ctx context.Context, args map[string]interface{}) (agent.ToolResult, error) {
 	query, _ := args["query"].(string)
-	return map[string]interface{}{
+	return agent.ToolResult{Data: map[string]interface{}{
 		"source":  "pinecone",
 		"query":   query,
 		"results": []string{"Result 1 from Pinecone", "Result 2 from Pinecone"},
-	}, nil
+	}}, nil
 }
 
 // ============================================================
@@ -101,13 +101,13 @@ func (t *SerpAPITool) Schema() interface{} {
 	}
 }
 
-func (t *SerpAPITool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+func (t *SerpAPITool) Execute(ctx context.Context, args map[string]interface{}) (agent.ToolResult, error) {
 	url, _ := args["url"].(string)
-	return map[string]interface{}{
+	return agent.ToolResult{Data: map[string]interface{}{
 		"source":  "serpapi",
 		"url":     url,
 		"content": "Crawled content from " + url,
-	}, nil
+	}}, nil
 }
 
 // ============================================================
@@ -161,7 +161,6 @@ Summarize findings from all sources.`,
 	task := &agent.Task{
 		ID:    "task-1",
 		Input: "Find comprehensive information about Go programming best practices",
-		State: make(map[string]interface{}),
 	}
 
 	fmt.Println("=== Starting Parallel Search Agent ===")

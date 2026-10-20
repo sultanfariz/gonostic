@@ -31,7 +31,6 @@ task := &agent.Task{
     Input:  "Summarize this document",
     Files:  []agent.FileInput{imageFile}, // Optional multimodal inputs
     Params: map[string]interface{}{"format": "bullet"},
-    State:  make(map[string]interface{}),
     Config: &agent.ExecutionConfig{
         MaxIterations:  5,
         TimeoutSeconds: 60,
@@ -61,8 +60,35 @@ Agents can invoke tools during execution:
 type Tool interface {
     Name() string
     Description() string
-    Schema() interface{}
-    Execute(ctx context.Context, args map[string]interface{}) (interface{}, error)
+    Schema() interface{} // JSON schema for parameters
+    Execute(ctx context.Context, args map[string]interface{}) (ToolResult, error)
+}
+
+// ToolResult is what a Tool returns.
+type ToolResult struct {
+    // Text is what the model reads. When empty, the model reads "<name> result: " followed by Data.
+    Text string
+    // Parts are extra content, such as images, sent to the model with the tool
+    // results on the next user message. Parts are never serialised.
+    Parts []Part `json:"-"`
+    // Data is the structured payload for the caller and for Task.State.
+    Data interface{}
+}
+```
+
+**Tool results with images:**
+Return images in `Parts`. The model sees them on the next turn, through providers that read `Message.Parts`.
+
+```go
+func (t *snapshotTool) Execute(ctx context.Context, args map[string]interface{}) (agent.ToolResult, error) {
+    png, err := captureFrame(args["time"]) // your code returns PNG bytes
+    if err != nil {
+        return agent.ToolResult{}, err
+    }
+    return agent.ToolResult{
+        Text:  "frame at 2.0 s",
+        Parts: []agent.Part{{Type: "image/png", Data: png}},
+    }, nil
 }
 ```
 
@@ -271,6 +297,15 @@ func (p *MyProvider) Complete(ctx context.Context, req *CompletionRequest) (*Mod
     // ... implementation
 }
 ```
+
+## Migrating from v0.2.x
+
+Four edits:
+
+1. Change the return type of every `Tool.Execute` from `(interface{}, error)` to `(ToolResult, error)`. Wrap the old value in `ToolResult{Data: value}` or `ToolResult{Text: text}`. Use `Data` to keep the old `Task.State` behaviour, because a result with only `Text` does not write to State.
+2. `ToolCall.Result` is now a `ToolResult`. Read the old value from `tc.Result.Data`.
+3. Set `Part.Data` to `[]byte` for images.
+4. `Task.State` is now a `TaskState` value, never nil. Use `task.State.Get`, `Set`, `Merge` and `Range`. Remove any line that builds `State` by hand.
 
 ## License
 

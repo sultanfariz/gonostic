@@ -173,6 +173,7 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 		if len(resp.ToolCalls) > 0 {
 			step.Action = "tool_execution"
 			var totalToolsLatency time.Duration
+			var resultParts []Part
 
 			for i := range resp.ToolCalls {
 				tc := &resp.ToolCalls[i]
@@ -190,14 +191,16 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 				tc.Result = tcResult
 				tc.Error = tcErr
 
+				if tcErr == nil {
+					resultParts = append(resultParts, tcResult.Parts...)
+				}
+
 				// Update task state with result
-				if tcErr == nil && tcResult != nil {
-					if resultMap, ok := tcResult.(map[string]interface{}); ok {
-						for k, v := range resultMap {
-							task.State[k] = v
-						}
+				if tcErr == nil && tcResult.Data != nil {
+					if resultMap, ok := tcResult.Data.(map[string]interface{}); ok {
+						task.State.Merge(resultMap)
 					} else {
-						task.State[tc.Name+"_result"] = tcResult
+						task.State.Set(tc.Name+"_result", tcResult.Data)
 					}
 				}
 
@@ -213,6 +216,7 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 			history = append(history, Message{
 				Role:    "user",
 				Content: formatToolResults(resp.ToolCalls),
+				Parts:   resultParts,
 			})
 
 			step.Duration = time.Since(stepStart)
@@ -330,12 +334,12 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 	return result, nil
 }
 
-func (a *LLMAgent) injectState(state map[string]interface{}) string {
+func (a *LLMAgent) injectState(state TaskState) string {
 	prompt := a.prompt
-	for key, val := range state {
+	state.Range(func(key string, val interface{}) {
 		placeholder := fmt.Sprintf("{%s}", key)
 		prompt = strings.ReplaceAll(prompt, placeholder, fmt.Sprint(val))
-	}
+	})
 	return prompt
 }
 
@@ -348,11 +352,11 @@ func (a *LLMAgent) findTool(name string) Tool {
 	return nil
 }
 
-func (a *LLMAgent) extractArtifacts(state map[string]interface{}) []Artifact {
+func (a *LLMAgent) extractArtifacts(state TaskState) []Artifact {
 	var artifacts []Artifact
 
 	// Look for known artifact patterns in state
-	for key, val := range state {
+	state.Range(func(key string, val interface{}) {
 		if strings.HasPrefix(key, "artifact_") ||
 			strings.HasSuffix(key, "_content") ||
 			strings.HasSuffix(key, "_output") {
@@ -364,7 +368,7 @@ func (a *LLMAgent) extractArtifacts(state map[string]interface{}) []Artifact {
 			}
 			artifacts = append(artifacts, artifact)
 		}
-	}
+	})
 
 	return artifacts
 }
@@ -397,8 +401,12 @@ func formatToolResults(calls []ToolCall) string {
 	for _, tc := range calls {
 		if tc.Error != nil {
 			parts = append(parts, fmt.Sprintf("%s failed: %v", tc.Name, tc.Error))
+		} else if tc.Result.Text != "" {
+			parts = append(parts, tc.Result.Text)
+		} else if tc.Result.Data != nil {
+			parts = append(parts, fmt.Sprintf("%s result: %v", tc.Name, tc.Result.Data))
 		} else {
-			parts = append(parts, fmt.Sprintf("%s result: %v", tc.Name, tc.Result))
+			parts = append(parts, tc.Name+" result: ")
 		}
 	}
 	return strings.Join(parts, "\n")

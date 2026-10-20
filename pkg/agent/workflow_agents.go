@@ -108,10 +108,7 @@ func (a *ParallelAgent) Execute(ctx context.Context, task *Task) (*Result, error
 
 			// Each agent gets its own state copy
 			taskCopy := *task
-			taskCopy.State = make(map[string]interface{})
-			for k, v := range task.State {
-				taskCopy.State[k] = v
-			}
+			taskCopy.State = task.State.Clone()
 
 			res, err := ag.Execute(ctx, &taskCopy)
 			results[idx] = agentResult{result: res, err: err}
@@ -139,7 +136,7 @@ func (a *ParallelAgent) Execute(ctx context.Context, task *Task) (*Result, error
 		if len(res.result.Steps) > 0 {
 			lastStep := res.result.Steps[len(res.result.Steps)-1]
 			for k, v := range lastStep.StateDelta {
-				task.State[k] = v
+				task.State.Set(k, v)
 			}
 		}
 	}

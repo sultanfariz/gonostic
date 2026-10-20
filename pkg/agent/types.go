@@ -29,7 +29,7 @@ type Task struct {
 	Input       string                 // User's minimal prompt
 	Files       []FileInput            // Files to pass as input to LLM (images, PDFs, etc.)
 	Params      map[string]interface{} // Additional parameters
-	State       map[string]interface{} // Working state
+	State       TaskState              // Working state
 	Config      *ExecutionConfig
 	StartedAt   time.Time
 	CompletedAt time.Time
@@ -91,9 +91,20 @@ type ToolCall struct {
 	ID        string
 	Name      string
 	Arguments map[string]interface{}
-	Result    interface{}
+	Result    ToolResult
 	Error     error
 	Duration  time.Duration
+}
+
+// ToolResult is what a Tool returns.
+type ToolResult struct {
+	// Text is what the model reads. When empty, the model reads "<name> result: " followed by Data.
+	Text string
+	// Parts are extra content, such as images, sent to the model with the tool
+	// results on the next user message. Parts are never serialised.
+	Parts []Part `json:"-"`
+	// Data is the structured payload for the caller and for Task.State.
+	Data interface{}
 }
 
 // Tool is a function that agents can invoke.
@@ -101,7 +112,7 @@ type Tool interface {
 	Name() string
 	Description() string
 	Schema() interface{} // JSON schema for parameters
-	Execute(ctx context.Context, args map[string]interface{}) (interface{}, error)
+	Execute(ctx context.Context, args map[string]interface{}) (ToolResult, error)
 }
 
 // CompletionRequest encapsulates all parameters for LLM completion.
