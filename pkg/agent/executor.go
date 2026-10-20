@@ -65,15 +65,12 @@ func (e *Executor) Submit(input string, params map[string]interface{}, config *E
 		ID:        taskID,
 		Input:     input,
 		Params:    params,
-		State:     make(map[string]interface{}),
 		Config:    config,
 		StartedAt: time.Now(),
 	}
 
 	// Copy params to state
-	for k, v := range params {
-		task.State[k] = v
-	}
+	task.State.Merge(params)
 
 	job := &Job{
 		Task:   task,
@@ -174,13 +171,10 @@ func (e *Executor) ExecuteSync(ctx context.Context, input string, params map[str
 		ID:        uuid.New().String(),
 		Input:     input,
 		Params:    params,
-		State:     make(map[string]interface{}),
 		StartedAt: time.Now(),
 	}
 
-	for k, v := range params {
-		task.State[k] = v
-	}
+	task.State.Merge(params)
 
 	return e.agent.Execute(ctx, task)
 }

@@ -161,7 +161,6 @@ Summarize findings from all sources.`,
 	task := &agent.Task{
 		ID:    "task-1",
 		Input: "Find comprehensive information about Go programming best practices",
-		State: make(map[string]interface{}),
 	}
 
 	fmt.Println("=== Starting Parallel Search Agent ===")

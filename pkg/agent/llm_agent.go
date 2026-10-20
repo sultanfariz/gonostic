@@ -79,9 +79,6 @@ func (a *LLMAgent) OutputSchema() map[string]interface{} {
 }
 
 func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
-	if task.State == nil {
-		task.State = make(map[string]interface{})
-	}
 	result := &Result{
 		TaskID:   task.ID,
 		Success:  false,
@@ -201,11 +198,9 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 				// Update task state with result
 				if tcErr == nil && tcResult.Data != nil {
 					if resultMap, ok := tcResult.Data.(map[string]interface{}); ok {
-						for k, v := range resultMap {
-							task.State[k] = v
-						}
+						task.State.Merge(resultMap)
 					} else {
-						task.State[tc.Name+"_result"] = tcResult.Data
+						task.State.Set(tc.Name+"_result", tcResult.Data)
 					}
 				}
 
@@ -339,12 +334,12 @@ func (a *LLMAgent) Execute(ctx context.Context, task *Task) (*Result, error) {
 	return result, nil
 }
 
-func (a *LLMAgent) injectState(state map[string]interface{}) string {
+func (a *LLMAgent) injectState(state TaskState) string {
 	prompt := a.prompt
-	for key, val := range state {
+	state.Range(func(key string, val interface{}) {
 		placeholder := fmt.Sprintf("{%s}", key)
 		prompt = strings.ReplaceAll(prompt, placeholder, fmt.Sprint(val))
-	}
+	})
 	return prompt
 }
 
@@ -357,11 +352,11 @@ func (a *LLMAgent) findTool(name string) Tool {
 	return nil
 }
 
-func (a *LLMAgent) extractArtifacts(state map[string]interface{}) []Artifact {
+func (a *LLMAgent) extractArtifacts(state TaskState) []Artifact {
 	var artifacts []Artifact
 
 	// Look for known artifact patterns in state
-	for key, val := range state {
+	state.Range(func(key string, val interface{}) {
 		if strings.HasPrefix(key, "artifact_") ||
 			strings.HasSuffix(key, "_content") ||
 			strings.HasSuffix(key, "_output") {
@@ -373,7 +368,7 @@ func (a *LLMAgent) extractArtifacts(state map[string]interface{}) []Artifact {
 			}
 			artifacts = append(artifacts, artifact)
 		}
-	}
+	})
 
 	return artifacts
 }

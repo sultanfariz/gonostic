@@ -56,7 +56,7 @@ func TestLLMAgentMaxTurnsTruncation(t *testing.T) {
 		MaxTurns: MaxTurnsConfig{Limit: 3, Graceful: true},
 	})
 
-	task := &Task{ID: "t1", Input: "go", State: map[string]interface{}{}}
+	task := &Task{ID: "t1", Input: "go"}
 
 	result, err := ag.Execute(context.Background(), task)
 
@@ -91,7 +91,7 @@ func TestLLMAgentMaxTurnsError(t *testing.T) {
 		MaxTurns: MaxTurnsConfig{Limit: 3}, // Graceful omitted — original error behavior expected
 	})
 
-	task := &Task{ID: "t3", Input: "go", State: map[string]interface{}{}}
+	task := &Task{ID: "t3", Input: "go"}
 
 	result, err := ag.Execute(context.Background(), task)
 
@@ -114,7 +114,7 @@ func TestLLMAgentNormalCompletion(t *testing.T) {
 		MaxTurns: MaxTurnsConfig{Limit: 5},
 	})
 
-	task := &Task{ID: "t2", Input: "go", State: map[string]interface{}{}}
+	task := &Task{ID: "t2", Input: "go"}
 
 	result, err := ag.Execute(context.Background(), task)
 
@@ -208,16 +208,16 @@ func TestLLMAgentStateMerge(t *testing.T) {
 			&namedTool{name: "str_tool", res: ToolResult{Data: "x"}},
 		},
 	})
-	task := &Task{ID: "t1", Input: "go", State: map[string]interface{}{}}
+	task := &Task{ID: "t1", Input: "go"}
 
 	if _, err := ag.Execute(context.Background(), task); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if task.State["k"] != "v" {
-		t.Errorf("State[k] = %v, want v", task.State["k"])
+	if got, _ := task.State.Get("k"); got != "v" {
+		t.Errorf("State[k] = %v, want v", got)
 	}
-	if task.State["str_tool_result"] != "x" {
-		t.Errorf("State[str_tool_result] = %v, want x", task.State["str_tool_result"])
+	if got, _ := task.State.Get("str_tool_result"); got != "x" {
+		t.Errorf("State[str_tool_result] = %v, want x", got)
 	}
 }
 
@@ -253,7 +253,7 @@ func (t *failingTool) Execute(_ context.Context, _ map[string]interface{}) (Tool
 func runRecorded(t *testing.T, provider *recordingProvider, tools ...Tool) []Message {
 	t.Helper()
 	ag := NewLLMAgent(LLMAgentConfig{Name: "rec", Prompt: "test", Model: provider, Tools: tools})
-	task := &Task{ID: "t1", Input: "go", State: map[string]interface{}{}}
+	task := &Task{ID: "t1", Input: "go"}
 	if _, err := ag.Execute(context.Background(), task); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -334,12 +334,12 @@ func TestLLMAgentNilState(t *testing.T) {
 		Model:  provider,
 		Tools:  []Tool{&namedTool{name: "map_tool", res: ToolResult{Data: map[string]interface{}{"k": "v"}}}},
 	})
-	task := &Task{ID: "t1", Input: "go", State: nil}
+	task := &Task{ID: "t1", Input: "go"}
 
 	if _, err := ag.Execute(context.Background(), task); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if task.State["k"] != "v" {
-		t.Errorf("State[k] = %v, want v", task.State["k"])
+	if got, _ := task.State.Get("k"); got != "v" {
+		t.Errorf("State[k] = %v, want v", got)
 	}
 }

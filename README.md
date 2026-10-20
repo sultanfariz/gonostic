@@ -31,7 +31,6 @@ task := &agent.Task{
     Input:  "Summarize this document",
     Files:  []agent.FileInput{imageFile}, // Optional multimodal inputs
     Params: map[string]interface{}{"format": "bullet"},
-    State:  make(map[string]interface{}),
     Config: &agent.ExecutionConfig{
         MaxIterations:  5,
         TimeoutSeconds: 60,
@@ -306,6 +305,7 @@ Three edits:
 1. Change the return type of every `Tool.Execute` from `(interface{}, error)` to `(ToolResult, error)`. Wrap the old value in `ToolResult{Data: value}` or `ToolResult{Text: text}`. Use `Data` to keep the old `Task.State` behaviour, because a result with only `Text` does not write to State.
 2. `ToolCall.Result` is now a `ToolResult`. Read the old value from `tc.Result.Data`.
 3. Set `Part.Data` to `[]byte` for images.
+4. `Task.State` is now a `TaskState` value, never nil. Use `task.State.Get`, `Set`, `Merge` and `Range`. Remove any line that builds `State` by hand.
 
 ## License
 
